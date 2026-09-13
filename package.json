@@ -28,5 +28,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ykunyao/gitv.git"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
   }
 }
