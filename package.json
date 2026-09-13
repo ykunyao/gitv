@@ -11,7 +11,7 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "demo": "bun run scripts/demo.ts",
-    "compile": "bun run scripts/embed.ts && bun build --compile src/cli.ts --outfile dist/gitv"
+    "compile": "bun run scripts/embed.ts && bun build --compile src/cli.ts --outfile dist/gitv && bun -e \"require('node:fs').rmSync('src/embedded-app.ts',{force:true})\""
   },
   "engines": {
     "bun": ">=1.1"

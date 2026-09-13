@@ -32,7 +32,7 @@ export function searchModel(model: RepoModel, query: string, limit = 8): SearchH
   for (const e of model.index.entries) {
     if (hits.length >= limit) break;
     if (e.path.toLowerCase().includes(q)) {
-      hits.push({ kind: "file", label: e.path, detail: "index", pick: () => jumpToChip(`index/${e.path}`) });
+      hits.push({ kind: "file", label: e.path, detail: "index", pick: () => jumpToChip(e.path) });
     }
   }
   for (const u of model.status.untracked) {

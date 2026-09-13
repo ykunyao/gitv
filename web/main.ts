@@ -87,7 +87,7 @@ function render(model: RepoModel, events: ModelEvent[]): void {
   // flow
   const flowFlash = new Set<string>();
   for (const e of events) {
-    if (e.e === "index") for (const p of [...e.added, ...e.modified, ...e.removed]) { flowFlash.add(`index/${p}`); flowFlash.add(`worktree/${p}`); }
+    if (e.e === "index") for (const p of [...e.added, ...e.modified, ...e.removed]) flowFlash.add(p);
   }
   const flow = renderFlow(flowZone, model, flowFlash, () => {
     if (lastRender) render(lastRender.model, []);
