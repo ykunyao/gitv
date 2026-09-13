@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>gitv</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='10' r='6' fill='%23ff7a45'/%3E%3Ccircle cx='22' cy='22' r='6' fill='%233da5f5'/%3E%3Cpath d='M12 14 L20 20' stroke='%23212227' stroke-width='2.5'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="stage">
+    <div id="world"></div>
+  </div>
+
+  <header id="hud">
+    <span id="hud-live" class="dot off"></span>
+    <span id="hud-repo">…</span>
+    <span id="hud-head" class="mono"></span>
+  </header>
+
+  <div id="zoombar">
+    <button id="zoom-out" aria-label="zoom out">−</button>
+    <button id="zoom-fit" aria-label="fit">⌂</button>
+    <button id="zoom-in" aria-label="zoom in">+</button>
+  </div>
+
+  <aside id="inspector" hidden>
+    <header id="inspector-head">
+      <span id="inspector-glyph" class="glyph"></span>
+      <span id="inspector-title" class="mono"></span>
+      <button id="inspector-close" aria-label="close">×</button>
+    </header>
+    <div id="inspector-body"></div>
+  </aside>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

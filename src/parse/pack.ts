@@ -139,7 +139,7 @@ export class PackFile {
   readonly idx: PackIndex;
   private mem: Buffer | null = null;
   private refMap: Map<string, number> | null = null;
-  private file: BunFile;
+  private file: ReturnType<typeof Bun.file>;
 
   constructor(readonly path: string, idx: PackIndex, readonly size: number, readonly hashLen = 20) {
     this.idx = idx;
@@ -152,7 +152,8 @@ export class PackFile {
     if (this.size <= PackFile.MEM_LIMIT && !this.mem) this.mem = Buffer.from(await this.file.arrayBuffer());
   }
 
-  private getBytes = async (off: number, len: number): Promise<Buffer> => {
+  /** Raw bytes [off, off+len) from this pack. */
+  getBytes = async (off: number, len: number): Promise<Buffer> => {
     if (this.mem) return this.mem.subarray(off, off + len);
     return Buffer.from(await this.file.slice(off, off + len).arrayBuffer());
   };

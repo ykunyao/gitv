@@ -1,0 +1,105 @@
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildFixture, git, type Fixture } from "./fixture.ts";
+import { RepoScanner, NotARepository } from "../src/scan/repo.ts";
+import { diffModels } from "../src/model.ts";
+
+const base = mkdtempSync(join(tmpdir(), "gitv-scan-"));
+let fx: Fixture;
+
+beforeAll(() => {
+  fx = buildFixture(base);
+}, 120000);
+
+afterAll(() => {
+  fx.dispose();
+  rmSync(base, { recursive: true, force: true });
+});
+
+function scanner(): RepoScanner {
+  const s = new RepoScanner();
+  s.worktree = fx.dir;
+  return s;
+}
+
+describe("RepoScanner", () => {
+  test("rejects non-repositories", async () => {
+    const empty = join(base, "empty");
+    mkdirSync(empty, { recursive: true });
+    const s = new RepoScanner();
+    s.worktree = empty;
+    await expect(s.scan()).rejects.toThrow(NotARepository);
+  });
+
+  test("full scan assembles a model", async () => {
+    const model = await scanner().scan();
+    expect(model.repo.name).toBe("fixture");
+    expect(model.head.ref).toBe("refs/heads/main");
+    expect(model.head.sha).toBeTruthy();
+    expect(model.refs.length).toBeGreaterThanOrEqual(4);
+    expect(model.commits.length).toBe(25); // initial + 20 notes + feature + main-edit + merge + loose
+    expect(model.commits[0]!.sha).toBe(fx.shas.loose!);
+    const merge = model.commits.find((c) => c.sha === fx.shas.merge!)!;
+    expect(merge.parents.length).toBe(2);
+    expect(model.counts.packed).toBeGreaterThan(50);
+    expect(model.counts.loose).toBeGreaterThan(0);
+    expect(model.index.entries.length).toBe(26);
+    expect(model.index.checksumOk).toBe(true);
+    expect(model.status.available).toBe(true);
+    expect(model.status.branch).toBe("main");
+  });
+
+  test("status detects staged, unstaged, untracked", async () => {
+    const s = scanner();
+    const model1 = await s.scan();
+
+    writeFileSync(join(fx.dir, "staged.txt"), "staged content\n");
+    writeFileSync(join(fx.dir, "unstaged-untracked.txt"), "untracked\n");
+    writeFileSync(join(fx.dir, "README.md"), "# fixture\n\nA repository built for gitv parser tests.\n\nEdited on main.\n\nMORE\n");
+    git(fx.dir, ["add", "staged.txt"]);
+    const model2 = await s.scan();
+
+    expect(model2.status.staged.map((c) => c.path)).toContain("staged.txt");
+    expect(model2.status.staged.find((c) => c.path === "staged.txt")!.sha).toBeTruthy();
+    expect(model2.status.unstaged.map((c) => c.path)).toContain("README.md");
+    expect(model2.status.unstaged.find((c) => c.path === "README.md")!.worktreeSha).toBeTruthy();
+    expect(model2.status.untracked).toContain("unstaged-untracked.txt");
+
+    const events = diffModels(model1, model2);
+    expect(events.some((e) => e.e === "object-add")).toBe(true);
+    expect(events.some((e) => e.e === "index")).toBe(true);
+  });
+
+  test("object detail returns parse stages", async () => {
+    const s = scanner();
+    await s.scan();
+    const detail = (await s.objectDetail(fx.shas.merge!))!;
+    expect(detail.type).toBe("commit");
+    expect((detail.integrity as { ok: boolean }).ok).toBe(true);
+    const parsed = detail.parsed as { parents: string[] };
+    expect(parsed.parents.length).toBe(2);
+    expect(Array.isArray(detail.compressedHead)).toBe(true);
+  });
+
+  test("object detail on packed delta object", async () => {
+    const s = scanner();
+    const model = await s.scan();
+    const delta = model.objects.find((o) => o.delta);
+    expect(delta).toBeTruthy();
+    const detail = (await s.objectDetail(delta!.sha))!;
+    expect(detail.delta).toBe(true);
+    expect((detail.integrity as { ok: boolean }).ok).toBe(true);
+  });
+
+  test("blob diff", async () => {
+    const s = scanner();
+    await s.scan();
+    const out = git(fx.dir, ["rev-parse", `${fx.shas.initial!}:README.md`, `${fx.shas.mainEdit!}:README.md`]).trim().split("\n");
+    const d = (await s.blobDiff(out[0]!, out[1]!))!;
+    expect(d.binary).toBeUndefined();
+    const ops = d.ops as { t: string }[];
+    expect(ops.some((o) => o.t === "ins")).toBe(true);
+  });
+});

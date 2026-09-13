@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { buildFixture, git, type Fixture } from "./fixture.ts";
 import { inflateLoose, scanLoose } from "../src/parse/loose.ts";
+import type { ObjType } from "../src/model.ts";
 import { parseIdx, PackFile } from "../src/parse/pack.ts";
 import { parseIndex } from "../src/parse/indexfile.ts";
 import { readHead, readRefs } from "../src/parse/refs.ts";
@@ -24,7 +25,7 @@ const catRaw = (type: string, sha: string): Buffer =>
 
 beforeAll(() => {
   fx = buildFixture(base);
-});
+}, 120000);
 
 afterAll(() => {
   fx.dispose();
@@ -46,7 +47,7 @@ describe("loose objects", () => {
 
   test("the post-repack commit is loose", async () => {
     const loose = await scanLoose(gitDir() + "/objects", 40);
-    expect(loose.map((l) => l.sha)).toContain(fx.shas.loose);
+    expect(loose.map((l) => l.sha)).toContain(fx.shas.loose!);
   });
 });
 
@@ -97,7 +98,7 @@ describe("packfiles", () => {
         const sha = idx.shas[i]!;
         const probe = await pf.probe(idx.offsets[i]!);
         const expectedType = deltas.get(sha);
-        if (expectedType) expect(probe.type).toBe(expectedType);
+        if (expectedType) expect(probe.type).toBe(expectedType as ObjType);
         const obj = await pf.read(idx.offsets[i]!);
         const expected = catRaw(obj.type, sha);
         expect(Buffer.compare(obj.content, expected)).toBe(0);
@@ -147,7 +148,7 @@ describe("index", () => {
     expect(idx.entries.length).toBe(expected.size);
     for (const e of idx.entries) {
       const exp = expected.get(e.path)!;
-      expect(e.sha).toBe(exp.sha);
+      expect(e.sha).toBe(exp.sha!);
       expect(e.stage).toBe(exp.stage);
       expect(BigInt("0o" + e.mode)).toBe(BigInt("0o" + exp.mode));
     }
@@ -156,14 +157,14 @@ describe("index", () => {
 
 describe("object payloads", () => {
   test("commit fields", () => {
-    const c = parseCommit(catFile(fx.shas.merge));
+    const c = parseCommit(catFile(fx.shas.merge!));
     expect(c.parents.length).toBe(2);
     expect(c.tree).toMatch(/^[0-9a-f]{40}$/);
     expect(c.author.name).toBe("Fixture");
   });
 
   test("tree entries", async () => {
-    const commit = parseCommit(catFile(fx.shas.initial));
+    const commit = parseCommit(catFile(fx.shas.initial!));
     const tree = parseTree(catRaw("tree", commit.tree), 20);
     const names = tree.map((e) => e.name);
     expect(names).toEqual(expect.arrayContaining(["README.md", "src", "big.txt", "img.png"]));
@@ -180,7 +181,7 @@ describe("object payloads", () => {
     const t = parseTag(catFile(v2.sha));
     expect(t.tag).toBe("v2");
     expect(t.message.trim()).toBe("release v2");
-    expect(t.object).toBe(fx.shas.merge);
+    expect(t.object).toBe(fx.shas.merge!);
   });
 });
 

@@ -1,7 +1,7 @@
 // Byte-level helpers shared by the parsers. Everything here works on raw
 // bytes exactly as they sit in .git — no libgit2, no shelling out.
 
-import type { ObjType } from "../model.ts";
+import type { ObjType } from "./model.ts";
 
 export const PACK_TYPE_NAMES: Record<number, string> = {
   1: "commit",

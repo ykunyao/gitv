@@ -1,0 +1,230 @@
+// gitv server: static frontend + JSON API + SSE live updates.
+
+import { join } from "node:path";
+import type { RepoModel, ModelEvent } from "./model.ts";
+import { RepoScanner, NotARepository } from "./scan/repo.ts";
+import { watchRepo, type RepoWatcher } from "./watcher.ts";
+
+const WEB_ROOT = join(import.meta.dir, "..", "web");
+
+interface SseClient {
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  encoder: TextEncoder;
+}
+
+export interface ServeHandle {
+  url: string;
+  stop(): Promise<void>;
+  rescan(): Promise<void>;
+}
+
+export async function serve(worktree: string, port: number): Promise<ServeHandle> {
+  const scanner = new RepoScanner();
+  await scanner.locate(worktree); // throws NotARepository early
+
+  let model: RepoModel | null = null;
+  let scanning = false;
+  let rescanQueued = false;
+  const clients = new Set<SseClient>();
+  const encoder = new TextEncoder();
+  let watcher: RepoWatcher | null = null;
+
+  const broadcast = (payload: { model: RepoModel; events: ModelEvent[] }): void => {
+    const data = encoder.encode(`event: model\ndata: ${JSON.stringify(payload)}\n\n`);
+    for (const c of clients) {
+      try {
+        c.controller.enqueue(data);
+      } catch {
+        clients.delete(c);
+      }
+    }
+  };
+
+  const rescan = async (notify = true): Promise<void> => {
+    if (scanning) {
+      rescanQueued = true;
+      return;
+    }
+    scanning = true;
+    try {
+      const next = await scanner.scan();
+      if (model) {
+        const { diffModels } = await import("./model.ts");
+        const events = diffModels(model, next);
+        model = next;
+        if (notify) broadcast({ model: next, events });
+      } else {
+        model = next;
+      }
+    } catch (e) {
+      console.error("rescan failed:", e);
+    } finally {
+      scanning = false;
+      if (rescanQueued) {
+        rescanQueued = false;
+        setTimeout(() => void rescan(), 10);
+      }
+    }
+  };
+
+  const json = (data: unknown, status = 200): Response =>
+    new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8" } });
+
+  const server = Bun.serve({
+    port,
+    idleTimeout: 0, // SSE connections stay open indefinitely
+    async fetch(req) {
+      const url = new URL(req.url);
+      const path = url.pathname;
+
+      try {
+        if (path === "/" || path === "/index.html") {
+          return new Response(await Bun.file(join(WEB_ROOT, "index.html")).text(), {
+            headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+          });
+        }
+        if (path === "/style.css") {
+          return new Response(await Bun.file(join(WEB_ROOT, "style.css")).text(), {
+            headers: { "content-type": "text/css; charset=utf-8", "cache-control": "no-store" },
+          });
+        }
+        if (path === "/app.js") {
+          return await buildFrontend();
+        }        if (path === "/api/model") {
+          if (!model) await rescan(false);
+          return json({ model });
+        }
+        if (path === "/api/events") {
+          if (!model) await rescan(false);
+          let controller: ReadableStreamDefaultController<Uint8Array>;
+          const stream = new ReadableStream({
+            start(c) {
+              controller = c;
+              c.enqueue(encoder.encode("retry: 2000\n\n"));
+              if (model) c.enqueue(encoder.encode(`event: model\ndata: ${JSON.stringify({ model, events: [] })}\n\n`));
+            },
+          });
+          const client: SseClient = { controller: controller!, encoder };
+          clients.add(client);
+          // note: client cleanup relies on enqueue failures; add an abort hook too
+          req.signal.addEventListener("abort", () => clients.delete(client));
+          return new Response(stream, {
+            headers: {
+              "content-type": "text/event-stream",
+              "cache-control": "no-store",
+              connection: "keep-alive",
+            },
+          });
+        }
+        if (path.startsWith("/api/object/")) {
+          const sha = decodeURIComponent(path.slice("/api/object/".length));
+          const detail = await scanner.objectDetail(sha);
+          if (!detail) return json({ error: "object not found" }, 404);
+          return json(detail);
+        }
+        if (path.startsWith("/api/tree/")) {
+          const sha = decodeURIComponent(path.slice("/api/tree/".length));
+          return json({ entries: await scanner.treeFlat(sha) });
+        }
+        if (path.startsWith("/api/raw/")) {
+          const sha = decodeURIComponent(path.slice("/api/raw/".length));
+          const obj = await scanner.readObject(sha);
+          if (!obj) return json({ error: "object not found" }, 404);
+          const type = sniffMime(obj.content);
+          return new Response(new Uint8Array(obj.content), { headers: { "content-type": type } });
+        }
+        if (path === "/api/diff") {
+          const a = url.searchParams.get("a") ?? "";
+          const b = url.searchParams.get("b") ?? "";
+          return json(await scanner.blobDiff(a, b) ?? { error: "unresolvable" });
+        }
+        if (path === "/api/worktree-file") {
+          const p = url.searchParams.get("path") ?? "";
+          const safe = join(scanner.worktree, p);
+          if (!safe.startsWith(scanner.worktree)) return json({ error: "bad path" }, 400);
+          const f = Bun.file(safe);
+          const st = await f.stat().catch(() => null);
+          if (!st?.isFile()) return json({ error: "not found" }, 404);
+          const cap = 2 * 1024 * 1024;
+          const size = Math.min(st.size, cap);
+          const buf = new Uint8Array(await f.slice(0, size).arrayBuffer());
+          let bin = "";
+          for (let i = 0; i < buf.length; i += 0x8000) {
+            bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+          }
+          return json({
+            path: p,
+            size: st.size,
+            binary: buf.subarray(0, 8192).includes(0),
+            base64: btoa(bin),
+            truncated: st.size > size,
+          });
+        }
+        return json({ error: "not found" }, 404);
+      } catch (e) {
+        if (e instanceof NotARepository) return json({ error: String(e.message) }, 500);
+        console.error(e);
+        return json({ error: String(e) }, 500);
+      }
+    },
+  });
+
+  await rescan(false);
+  watcher = watchRepo(scanner.worktree, scanner.gitDir, () => void rescan());
+
+  // keepalive ping so proxies/clients never consider the stream dead
+  const ping = setInterval(() => {
+    const data = encoder.encode(`: ping\n\n`);
+    for (const c of clients) {
+      try {
+        c.controller.enqueue(data);
+      } catch {
+        clients.delete(c);
+      }
+    }
+  }, 20000);
+  ping.unref?.();
+
+  return {
+    url: `http://localhost:${server.port}`,
+    async stop() {
+      clearInterval(ping);
+      watcher?.close();
+      for (const c of clients) {
+        try {
+          c.controller.close();
+        } catch { /* already gone */ }
+      }
+      clients.clear();
+      server.stop(true);
+    },
+    rescan: () => rescan(true),
+  };
+}
+
+let buildSeq = 0;
+async function buildFrontend(): Promise<Response> {
+  try {
+    const result = await Bun.build({
+      entrypoints: [join(WEB_ROOT, "main.ts")],
+      target: "browser",
+      naming: "[name].[ext]",
+      minify: false,
+    });
+    return new Response(await result.outputs[0]!.text(), {
+      headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store" },
+    });
+  } catch (e) {
+    const msg = `console.error(${JSON.stringify(String(e))});`;
+    return new Response(msg, { headers: { "content-type": "application/javascript; charset=utf-8" } });
+  }
+}
+
+function sniffMime(b: Buffer): string {
+  if (b.length > 8 && b[0] === 0x89 && b[1] === 0x50) return "image/png";
+  if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8) return "image/jpeg";
+  if (b.length > 6 && b.subarray(0, 3).toString("latin1") === "GIF") return "image/gif";
+  if (b.length > 12 && b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  if (b.length > 4 && b.subarray(0, 5).toString("latin1") === "<?xml") return "image/svg+xml";
+  return "application/octet-stream";
+}
