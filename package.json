@@ -1,0 +1,32 @@
+{
+  "name": "gitv",
+  "version": "0.1.0",
+  "description": "See your .git — every byte, every object, live. A git repository visualizer that parses real bytes and animates history as it happens.",
+  "type": "module",
+  "bin": {
+    "gitv": "./bin/gitv.js"
+  },
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "demo": "bun run scripts/demo.ts"
+  },
+  "engines": {
+    "bun": ">=1.1"
+  },
+  "keywords": [
+    "git",
+    "visualizer",
+    "visualization",
+    "devtools",
+    "packfile",
+    "internals"
+  ],
+  "author": "ykunyao",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ykunyao/gitv.git"
+  }
+}
