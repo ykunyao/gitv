@@ -94,6 +94,23 @@ export class Scene {
     this.apply();
   }
 
+  /** Put a world-space point at the center of the viewport. */
+  centerOn(wx: number, wy: number): void {
+    this.tx = this.stage.clientWidth / 2 - wx * this.scale;
+    this.ty = this.stage.clientHeight / 2 - wy * this.scale;
+    this.apply();
+  }
+
+  /** World-space center of a scene element. */
+  worldCenterOf(el: HTMLElement): { x: number; y: number } {
+    const wr = this.world.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    return {
+      x: (r.left + r.width / 2 - wr.left) / this.scale,
+      y: (r.top + r.height / 2 - wr.top) / this.scale,
+    };
+  }
+
   private wire(): void {
     this.stage.addEventListener("wheel", (e) => {
       e.preventDefault();

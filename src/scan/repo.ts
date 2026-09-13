@@ -465,6 +465,67 @@ export class RepoScanner {
     return out;
   }
 
+  /**
+   * Files changed by a commit relative to its first parent — a hand-rolled
+   * diff-tree over the two root trees.
+   */
+  async commitDiff(sha: string): Promise<{ parent: string | null; files: { path: string; kind: "add" | "mod" | "del" | "type"; aSha?: string; bSha?: string }[] } | null> {
+    const obj = await this.readObject(sha);
+    if (!obj || obj.type !== "commit") return null;
+    const c = parseCommit(obj.content);
+    const parent = c.parents[0] ?? null;
+    const parentObj = parent ? await this.readObject(parent) : null;
+    const parentTree = parentObj && parentObj.type === "commit" ? parseCommit(parentObj.content).tree : null;
+    const files: { path: string; kind: "add" | "mod" | "del" | "type"; aSha?: string; bSha?: string }[] = [];
+    await this.diffTrees(parentTree, c.tree, "", files, { n: 3000 });
+    files.sort((a, b) => a.path.localeCompare(b.path));
+    return { parent, files };
+  }
+
+  private async diffTrees(
+    aSha: string | null,
+    bSha: string | null,
+    prefix: string,
+    out: { path: string; kind: "add" | "mod" | "del" | "type"; aSha?: string; bSha?: string }[],
+    budget: { n: number },
+  ): Promise<void> {
+    const readTree = async (sha: string | null) => {
+      if (!sha) return [];
+      const o = await this.readObject(sha);
+      return o && o.type === "tree" ? parseTree(o.content, this.hashLen) : [];
+    };
+    const [aEntries, bEntries] = [await readTree(aSha), await readTree(bSha)];
+    const am = new Map(aEntries.map((e) => [e.name, e]));
+    const bm = new Map(bEntries.map((e) => [e.name, e]));
+    for (const name of [...new Set([...am.keys(), ...bm.keys()])].sort()) {
+      if (budget.n <= 0 || out.length >= 300) return;
+      const a = am.get(name), b = bm.get(name);
+      const path = prefix ? `${prefix}/${name}` : name;
+      if (a && b) {
+        if (a.sha === b.sha && a.mode === b.mode) continue;
+        if (a.kind === "tree" && b.kind === "tree") {
+          await this.diffTrees(a.sha, b.sha, path, out, budget);
+          continue;
+        }
+        out.push({
+          path,
+          kind: a.kind !== b.kind ? "type" : "mod",
+          aSha: a.kind === "tree" ? undefined : a.sha,
+          bSha: b.kind === "tree" ? undefined : b.sha,
+        });
+        budget.n--;
+      } else if (b) {
+        if (b.kind === "tree") await this.diffTrees(null, b.sha, path, out, budget);
+        else out.push({ path, kind: "add", bSha: b.sha });
+        budget.n--;
+      } else if (a) {
+        if (a.kind === "tree") await this.diffTrees(a.sha, null, path, out, budget);
+        else out.push({ path, kind: "del", aSha: a.sha });
+        budget.n--;
+      }
+    }
+  }
+
   async blobDiff(aSpec: string, bSpec: string): Promise<Record<string, unknown> | null> {
     const load = async (spec: string): Promise<{ content: Buffer; label: string } | null> => {
       if (spec.startsWith("worktree:")) {

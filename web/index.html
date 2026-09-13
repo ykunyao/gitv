@@ -18,10 +18,16 @@
     <span id="hud-head" class="mono"></span>
   </header>
 
+  <div id="search" hidden>
+    <input id="search-input" type="text" spellcheck="false" placeholder="sha · file · subject" />
+    <div id="search-hits"></div>
+  </div>
+
   <div id="zoombar">
     <button id="zoom-out" aria-label="zoom out">−</button>
     <button id="zoom-fit" aria-label="fit">⌂</button>
     <button id="zoom-in" aria-label="zoom in">+</button>
+    <button id="layout-reset" aria-label="reset layout">↺</button>
   </div>
 
   <aside id="inspector" hidden>

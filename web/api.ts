@@ -17,11 +17,44 @@ export interface ObjectDetail {
   parsed: unknown;
 }
 
+/** Parsed payload with per-field byte ranges (offsets inside the content). */
+export interface CommitParsed {
+  tree: string;
+  parents: string[];
+  author: { name: string; email: string; when: number; tz: string };
+  committer: { name: string; email: string; when: number; tz: string };
+  message: string;
+  ranges: { key: string; start: number; end: number }[];
+}
+
+export interface TreeParsedEntry {
+  mode: string;
+  name: string;
+  sha: string;
+  kind: string;
+  start: number;
+  end: number;
+}
+
+export interface TagParsed {
+  object: string;
+  type: string;
+  tag: string;
+  tagger?: { name: string; email: string; when: number };
+  message: string;
+  ranges: { key: string; start: number; end: number }[];
+}
+
 export interface TreeFlatEntry {
   path: string;
   sha: string;
   kind: string;
   mode: string;
+}
+
+export interface CommitDiff {
+  parent: string | null;
+  files: { path: string; kind: "add" | "mod" | "del" | "type"; aSha?: string; bSha?: string }[];
 }
 
 export interface DiffPayload {
@@ -47,10 +80,16 @@ export async function getObjectDetail(sha: string): Promise<ObjectDetail> {
   return r.json();
 }
 
-export async function getTree(sha: string): Promise<TreeFlatEntry[]> {
-  const r = await fetch(`/api/tree/${sha}`);
+export async function getTree(sha: string, cap = 600): Promise<TreeFlatEntry[]> {
+  const r = await fetch(`/api/tree/${sha}?cap=${cap}`);
   const j = await r.json();
   return j.entries as TreeFlatEntry[];
+}
+
+export async function getCommitDiff(sha: string): Promise<CommitDiff> {
+  const r = await fetch(`/api/commit-diff/${sha}`);
+  if (!r.ok) throw new Error(`commit-diff ${sha.slice(0, 7)}: ${r.status}`);
+  return r.json();
 }
 
 export async function getDiff(a: string, b: string): Promise<DiffPayload> {

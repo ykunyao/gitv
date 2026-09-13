@@ -1,8 +1,9 @@
 // Inspector: the byte-by-byte story of an object, and content/diff views
 // for files. Everything shown comes from what the parsers actually saw.
+// Hovering a parsed field lights up the exact bytes it was read from.
 
-import type { ObjectDetail, TreeFlatEntry, DiffPayload, CommitInfo } from "./api.ts";
-import { getObjectDetail, getTree, getDiff, getWorktreeFile, rawUrl } from "./api.ts";
+import type { ObjectDetail, CommitParsed, TreeParsedEntry, TagParsed, DiffPayload, CommitDiff } from "./api.ts";
+import { getObjectDetail, getTree, getDiff, getWorktreeFile, getCommitDiff, rawUrl } from "./api.ts";
 import { el, fmtBytes, drawTapestry } from "./scene.ts";
 import type { FlowTarget } from "./flow.ts";
 
@@ -31,6 +32,7 @@ export class Inspector {
     this.glyph = document.getElementById("inspector-glyph")!;
     document.getElementById("inspector-close")!.addEventListener("click", () => this.close());
     document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !document.getElementById("search")?.matches("[hidden]")) return; // search owns Esc first
       if (e.key === "Escape") this.close();
     });
   }
@@ -78,7 +80,7 @@ export class Inspector {
 
   // ---- object mode -----------------------------------------------------------
 
-  async openObject(sha: string): Promise<void> {
+  async openObject(sha: string, openFileDiff?: (sha: string, file: CommitDiff["files"][number]) => void): Promise<void> {
     const token = this.begin(sha.slice(0, 7) + " …", "blob");
     this.currentSha = sha;
     this.onChange?.(sha);
@@ -101,74 +103,180 @@ export class Inspector {
     chip.append(kind, el("span", "mono", pathText));
     srcStage.appendChild(chip);
 
-    // 2 — delta chain, if the object hides behind one
-    if (detail.delta && detail.where.kind === "pack") {
-      const dcStage = this.stage("DELTA CHAIN");
-      const kv = el("div", "kv");
-      kv.innerHTML = `<span class="k">storage</span><span class="v">delta — resolved through its base to show the content below</span>`;
-      dcStage.appendChild(kv);
-    }
-
-    // 3 — compressed bytes
+    // 2 — compressed bytes
     if (detail.compressedHead?.length) {
       const cStage = this.stage(detail.where.kind === "pack" ? "COMPRESSED (zlib, in pack)" : "COMPRESSED (zlib)");
-      cStage.appendChild(hexdump(new Uint8Array(detail.compressedHead)));
+      cStage.appendChild(hexdump(new Uint8Array(detail.compressedHead)).el);
     }
 
-    // 4 — inflated: header + first payload bytes (header range highlighted)
-    const iStage = this.stage("INFLATED");
+    // 3 — inflated: header + payload; field rows below steer its highlight
     const headBytes = new TextEncoder().encode(`${detail.type} ${detail.size}\0`);
     const contentHead = new Uint8Array(detail.contentHead);
-    const combined = new Uint8Array(headBytes.length + Math.min(contentHead.length, 96));
-    combined.set(headBytes, 0);
-    combined.set(contentHead.subarray(0, combined.length - headBytes.length), headBytes.length);
-    iStage.appendChild(hexdump(combined, 0, headBytes.length));
+    let shown = new Uint8Array(Math.min(headBytes.length + contentHead.length, headBytes.length + 192));
+    shown.set(headBytes, 0);
+    shown.set(contentHead.subarray(0, shown.length - headBytes.length), headBytes.length);
+    const hex = hexdump(shown, 0, headBytes.length);
+    const iStage = this.stage("INFLATED");
+    iStage.appendChild(hex.el);
+    const hoverField = (start: number | null, end: number | null): void => {
+      if (start === null || end === null) {
+        hex.set(0, headBytes.length);
+        return;
+      }
+      // grow the window so the highlighted range is actually visible
+      const need = headBytes.length + end + 16;
+      if (need > shown.length) {
+        shown = new Uint8Array(Math.min(need, headBytes.length + contentHead.length));
+        shown.set(headBytes, 0);
+        shown.set(contentHead.subarray(0, shown.length - headBytes.length), headBytes.length);
+        hex.setBuffer(shown);
+      }
+      hex.set(headBytes.length + start, headBytes.length + end);
+    };
+    this.hexCtl = hoverField;
 
-    // 5 — integrity
+    // 4 — integrity
     if (detail.integrity) {
       const gStage = this.stage("INTEGRITY");
       const ok = detail.integrity.ok;
       gStage.appendChild(el("div", ok ? "check-ok" : "check-bad", ok ? `sha ✓  ${detail.sha.slice(0, 12)} — rehashing the bytes reproduces the name` : `sha ✗ expected ${detail.sha.slice(0, 12)}, got ${detail.integrity.computed.slice(0, 12)}`));
     }
 
-    // 6 — parsed payload
+    // 5 — parsed payload (rows steer the hexdump highlight)
     const pStage = this.stage("PARSED");
     if (detail.type === "commit") {
-      pStage.appendChild(this.commitView(detail));
+      pStage.appendChild(this.commitView(detail, hoverField));
     } else if (detail.type === "tree") {
-      pStage.appendChild(this.treeView(detail));
+      pStage.appendChild(this.treeView(detail, hoverField));
     } else if (detail.type === "tag") {
-      pStage.appendChild(this.tagView(detail));
+      pStage.appendChild(this.tagView(detail, hoverField));
     } else {
       pStage.appendChild(this.blobView(detail, token));
+      this.hexCtl = null;
+    }
+
+    // 6 — what this commit changed vs its first parent
+    if (detail.type === "commit") {
+      const changeStage = this.stage("CHANGED · vs parent");
+      changeStage.id = "changed-stage";
+      try {
+        const d = await getCommitDiff(sha);
+        if (this.stale(token)) return;
+        this.renderChangedFiles(changeStage, d, sha, openFileDiff);
+      } catch {
+        if (!this.stale(token)) changeStage.appendChild(el("div", "more-note", "unavailable"));
+      }
     }
   }
 
-  private commitView(detail: ObjectDetail): HTMLElement {
-    const p = detail.parsed as { tree: string; parents: string[]; author: { name: string; email: string; when: number; tz: string }; committer: { name: string; email: string; when: number; tz: string }; message: string };
-    const kv = el("div", "kv");
-    const row = (k: string, v: HTMLElement | string, link?: string): void => {
-      kv.appendChild(el("span", "k", k));
-      if (typeof v === "string") {
-        const s = el("span", link ? "v link" : "v", v);
-        if (link) s.addEventListener("click", () => this.openObject(link));
-        kv.appendChild(s);
-      } else {
-        v.classList.add("v");
-        kv.appendChild(v);
+  private hexCtl: ((start: number | null, end: number | null) => void) | null = null;
+
+  private renderChangedFiles(stage: HTMLElement, d: CommitDiff, commitSha: string, openFileDiff?: (sha: string, file: CommitDiff["files"][number]) => void): void {
+    if (!d.files.length) {
+      stage.appendChild(el("div", "more-note", d.parent ? "tree identical to parent" : "root commit — first version of everything"));
+      return;
+    }
+    const list = el("div", "cfile-list");
+    for (const f of d.files) {
+      const row = el("div", "cfile-row");
+      const dot = el("span", "kind-dot");
+      dot.style.background = f.kind === "add" ? "var(--add-ink)" : f.kind === "del" ? "var(--del-ink)" : "var(--mod-ink)";
+      const dir = f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/") + 1) : "";
+      row.append(dot, el("span", "dir", dir), document.createTextNode(f.path.slice(dir.length)), el("span", "cfile-kind", f.kind));
+      row.addEventListener("click", () => openFileDiff?.(commitSha, f));
+      if (openFileDiff) row.classList.add("link");
+      list.appendChild(row);
+    }
+    stage.appendChild(list);
+    if (d.files.length >= 300) stage.appendChild(el("div", "more-note", "…300+ files, list truncated"));
+  }
+
+  /** Inline view of one changed file inside the current commit inspector. */
+  async showCommitFileDiff(commitSha: string, file: CommitDiff["files"][number], back: () => void): Promise<void> {
+    const token = this.begin(`${file.path}  ·  ${file.kind}`, "blob");
+    const bar = el("div", "cfile-back", "← back to commit");
+    bar.addEventListener("click", back);
+    this.add(bar);
+    if (file.kind === "del" && file.aSha) {
+      this.add(el("div", "more-note", "deleted in this commit — content below is the last version"));
+      this.add(await this.blobContentEl(file.aSha, token));
+      return;
+    }
+    if (!file.aSha || !file.bSha) {
+      const only = file.bSha ?? file.aSha;
+      if (only) this.add(await this.blobContentEl(only, token));
+      return;
+    }
+    const d = await getDiff(file.aSha, file.bSha);
+    if (this.stale(token)) return;
+    if (d.binary || d.tooLarge || !d.ops) {
+      this.add(el("div", "more-note", d.binary ? `binary · ${fmtBytes(d.aSize ?? 0)} → ${fmtBytes(d.bSize ?? 0)}` : d.error ?? "diff unavailable"));
+      return;
+    }
+    this.add(diffView(d, file.aSha.slice(0, 7), file.bSha.slice(0, 7)));
+  }
+
+  private async blobContentEl(sha: string, token: number): Promise<HTMLElement> {
+    try {
+      const detail = await getObjectDetail(sha);
+      if (this.stale(token)) return el("div");
+      if (detail.contentHead.slice(0, 8192).includes(0)) {
+        const cv = document.createElement("canvas");
+        const wrap = el("div");
+        wrap.appendChild(cv);
+        drawTapestry(cv, detail.contentHead, 440, 200);
+        return wrap;
       }
+      const text = new TextDecoder().decode(new Uint8Array(detail.contentHead));
+      const view = el("div", "content-view");
+      view.appendChild(contentLines(text.replace(/\n$/, "").split("\n"), 0));
+      return view;
+    } catch {
+      return el("div", "more-note", "content unavailable");
+    }
+  }
+
+  // ---- parsed payload views (each row knows its bytes) ------------------------
+
+  private commitView(detail: ObjectDetail, hover: (start: number | null, end: number | null) => void): HTMLElement {
+    const p = detail.parsed as CommitParsed;
+    const kv = el("div", "kv");
+
+    const row = (k: string, value: HTMLElement | string, range?: { start: number; end: number }, link?: string): void => {
+      const r = el("div", "kv-row");
+      r.appendChild(el("span", "k", k));
+      let v: HTMLElement;
+      if (typeof value === "string") {
+        v = el("span", link ? "v link" : "v", value);
+        if (link) v.addEventListener("click", () => this.openObject(link));
+      } else {
+        v = value;
+        v.classList.add("v");
+      }
+      r.appendChild(v);
+      if (range) {
+        r.addEventListener("mouseenter", () => hover(range.start, range.end));
+        r.addEventListener("mouseleave", () => hover(null, null));
+      }
+      kv.appendChild(r);
     };
-    row("tree", p.tree.slice(0, 12), p.tree);
-    p.parents.forEach((parent, i) => row(i === 0 ? "parent" : "parent " + (i + 1), parent.slice(0, 12), parent));
-    row("author", `${p.author.name} <${p.author.email}> · ${p.author.tz}`);
-    row("committed", new Date(p.committer.when).toLocaleString());
-    const msg = el("span", "", p.message.trim());
-    row("message", msg);
+
+    let parentIdx = 0;
+    for (const r of p.ranges) {
+      if (r.key === "tree") row("tree", p.tree.slice(0, 12), r, p.tree);
+      else if (r.key === "parent") {
+        const i = parentIdx++;
+        row(i === 0 ? "parent" : `parent ${i + 1}`, p.parents[i]?.slice(0, 12) ?? "", r, p.parents[i]);
+      }
+      else if (r.key === "author") row("author", `${p.author.name} <${p.author.email}> · ${p.author.tz}`, r);
+      else if (r.key === "committer") row("committed", new Date(p.committer.when).toLocaleString(), r);
+      else if (r.key === "message") row("message", p.message.trim() || "—", r);
+    }
     return kv;
   }
 
-  private treeView(detail: ObjectDetail): HTMLElement {
-    const entries = detail.parsed as { mode: string; name: string; sha: string; kind: string }[];
+  private treeView(detail: ObjectDetail, hover: (start: number | null, end: number | null) => void): HTMLElement {
+    const entries = detail.parsed as TreeParsedEntry[];
     const wrap = el("div");
     const table = el("table", "tree-table");
     for (const e of entries.slice(0, 200)) {
@@ -181,6 +289,8 @@ export class Inspector {
       const kind = el("td", "", e.kind === "gitlink" ? "submodule" : e.kind);
       const sha = el("td", "", e.sha.slice(0, 10));
       tr.append(nm, kind, sha);
+      tr.addEventListener("mouseenter", () => hover(e.start, e.end));
+      tr.addEventListener("mouseleave", () => hover(null, null));
       table.appendChild(tr);
     }
     wrap.appendChild(table);
@@ -188,20 +298,28 @@ export class Inspector {
     return wrap;
   }
 
-  private tagView(detail: ObjectDetail): HTMLElement {
-    const p = detail.parsed as { object: string; type: string; tag: string; tagger?: { name: string; email: string; when: number }; message: string };
+  private tagView(detail: ObjectDetail, hover: (start: number | null, end: number | null) => void): HTMLElement {
+    const p = detail.parsed as TagParsed;
     const kv = el("div", "kv");
-    const row = (k: string, v: string, link?: string): void => {
-      kv.appendChild(el("span", "k", k));
+    const row = (k: string, v: string, range?: { start: number; end: number }, link?: string): void => {
+      const r = el("div", "kv-row");
+      r.appendChild(el("span", "k", k));
       const s = el("span", link ? "v link" : "v", v);
       if (link) s.addEventListener("click", () => this.openObject(link));
-      kv.appendChild(s);
+      r.appendChild(s);
+      if (range) {
+        r.addEventListener("mouseenter", () => hover(range.start, range.end));
+        r.addEventListener("mouseleave", () => hover(null, null));
+      }
+      kv.appendChild(r);
     };
-    row("tag", p.tag);
-    row("object", p.object.slice(0, 12), p.object);
-    row("type", p.type);
-    if (p.tagger) row("tagger", `${p.tagger.name} <${p.tagger.email}>`);
-    row("message", p.message.trim() || "—");
+    for (const r of p.ranges) {
+      if (r.key === "object") row("object", p.object.slice(0, 12), r, p.object);
+      else if (r.key === "type") row("type", p.type, r);
+      else if (r.key === "tag") row("tag", p.tag, r);
+      else if (r.key === "tagger") row("tagger", p.tagger ? `${p.tagger.name} <${p.tagger.email}>` : "—", r);
+      else if (r.key === "message") row("message", p.message.trim() || "—", r);
+    }
     return kv;
   }
 
@@ -395,33 +513,43 @@ interface Side {
 
 // ---- shared render helpers -----------------------------------------------------
 
-function hexdump(bytes: Uint8Array, highlightFrom?: number, highlightTo?: number): HTMLElement {
+interface HexCtl {
+  el: HTMLElement;
+  set(from: number, to: number): void;
+  setBuffer(bytes: Uint8Array): void;
+}
+
+function hexdump(bytes: Uint8Array, hlFrom?: number, hlTo?: number): HexCtl {
   const pre = el("pre", "hexdump");
-  const lines: string[] = [];
-  const hlLines = new Set<number>();
-  for (let off = 0; off < bytes.length; off += 16) {
-    const chunk = bytes.subarray(off, off + 16);
-    const hex = [...chunk].map((b) => b.toString(16).padStart(2, "0"));
-    const ascii = [...chunk].map((b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : "·")).join("");
-    lines.push(`${off.toString(16).padStart(4, "0")}  ${hex.join(" ")}`);
-    const asciiPadded = hex.length < 16 ? " ".repeat((16 - hex.length) * 3) : "";
-    lines[lines.length - 1] += `${asciiPadded}  ${ascii}`;
-    for (let i = 0; i < chunk.length; i++) {
-      const abs = off + i;
-      if (highlightFrom !== undefined && highlightTo !== undefined && abs >= highlightFrom && abs < highlightTo) hlLines.add(lines.length - 1);
+  let buf = bytes;
+  const render = (from: number, to: number): void => {
+    const lines: string[] = [];
+    const hlLines = new Set<number>();
+    for (let off = 0; off < buf.length; off += 16) {
+      const chunk = buf.subarray(off, off + 16);
+      const hex = [...chunk].map((b) => b.toString(16).padStart(2, "0"));
+      const ascii = [...chunk].map((b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : "·")).join("");
+      lines.push(`${off.toString(16).padStart(4, "0")}  ${hex.join(" ")}`);
+      const asciiPadded = hex.length < 16 ? " ".repeat((16 - hex.length) * 3) : "";
+      lines[lines.length - 1] += `${asciiPadded}  ${ascii}`;
+      for (let i = 0; i < chunk.length; i++) {
+        const abs = off + i;
+        if (abs >= from && abs < to) hlLines.add(lines.length - 1);
+      }
     }
-  }
-  pre.innerHTML = lines
-    .map((l, i) => {
-      if (!hlLines.has(i)) return `<span class="off">${l.slice(0, 4)}</span>${l.slice(4)}`;
-      const offPart = `<span class="off">${l.slice(0, 4)}</span>`;
-      const rest = l.slice(4);
-      const bytesPart = rest.slice(0, 49);
-      const asciiPart = rest.slice(49);
-      return `${offPart}<span class="hl">${bytesPart}</span>  ${asciiPart}`;
-    })
-    .join("\n");
-  return pre;
+    pre.innerHTML = lines
+      .map((l, i) => {
+        if (!hlLines.has(i)) return `<span class="off">${l.slice(0, 4)}</span>${l.slice(4)}`;
+        const offPart = `<span class="off">${l.slice(0, 4)}</span>`;
+        const rest = l.slice(4);
+        const bytesPart = rest.slice(0, 49);
+        const asciiPart = rest.slice(49);
+        return `${offPart}<span class="hl">${bytesPart}</span>  ${asciiPart}`;
+      })
+      .join("\n");
+  };
+  render(hlFrom ?? 0, hlTo ?? 0);
+  return { el: pre, set: render, setBuffer: (b) => { buf = b; } };
 }
 
 function contentLines(lines: string[], startNo: number): DocumentFragment {
@@ -482,5 +610,3 @@ function isImageBytes(b: Uint8Array): boolean {
       (b[0] === 0x52 && b[1] === 0x49 && b[8] === 0x57))
   );
 }
-
-export type { CommitInfo };

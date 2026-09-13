@@ -109,6 +109,7 @@ function chipItem(
     key,
     make: (): HTMLElement => {
       const chip = el("div", `chip ${kind}`);
+      chip.dataset.key = key;
       chip.addEventListener("click", () => {
         onOpen({ kind: "chip", column, path, change, headSha, indexSha: change?.sha });
       });

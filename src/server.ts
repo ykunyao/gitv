@@ -124,7 +124,14 @@ export async function serve(worktree: string, port: number): Promise<ServeHandle
         }
         if (path.startsWith("/api/tree/")) {
           const sha = decodeURIComponent(path.slice("/api/tree/".length));
-          return json({ entries: await scanner.treeFlat(sha) });
+          const cap = Number.parseInt(url.searchParams.get("cap") ?? "600", 10);
+          return json({ entries: await scanner.treeFlat(sha, Number.isFinite(cap) ? Math.min(cap, 5000) : 600) });
+        }
+        if (path.startsWith("/api/commit-diff/")) {
+          const sha = decodeURIComponent(path.slice("/api/commit-diff/".length));
+          const d = await scanner.commitDiff(sha);
+          if (!d) return json({ error: "commit not found" }, 404);
+          return json(d);
         }
         if (path.startsWith("/api/raw/")) {
           const sha = decodeURIComponent(path.slice("/api/raw/".length));

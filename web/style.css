@@ -479,9 +479,19 @@ img.thumb { display: block; margin: 6px auto 0; max-width: 92%; max-height: 110p
 }
 .stage-label .arrow { color: var(--hair-strong); font-size: 11px; }
 
-.kv { display: grid; grid-template-columns: 86px 1fr; gap: 3px 12px; font-size: 12px; }
+.kv { display: flex; flex-direction: column; gap: 3px; }
+.kv-row {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 3px 12px;
+  border-radius: 6px;
+  padding: 2px 6px;
+  margin: 0 -6px;
+  transition: background 0.12s ease;
+}
+.kv-row:hover { background: var(--mod-bg); }
 .kv .k { color: var(--dim); font-size: 11px; padding-top: 1px; }
-.kv .v { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.kv .v { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .kv .v.link { cursor: pointer; color: var(--ren-ink); }
 .kv .v.link:hover { text-decoration: underline; }
 
@@ -584,10 +594,85 @@ pre.hexdump .ascii { color: var(--dim); }
 
 .tree-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
 .tree-table td { padding: 2.5px 8px 2.5px 0; border-bottom: 1px solid var(--hair); }
+.tree-table tr:hover td { background: var(--mod-bg); }
 .tree-table td:last-child { text-align: right; color: var(--faint); }
 .tree-table .nm { cursor: pointer; }
 .tree-table .nm:hover { text-decoration: underline; }
 .tree-table .kind-dot { display: inline-block; width: 7px; height: 7px; border-radius: 2.5px; margin-right: 7px; }
+
+.cfile-list { display: flex; flex-direction: column; }
+.cfile-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 3.5px 8px;
+  border-radius: 7px;
+}
+.cfile-row .dir { color: var(--faint); }
+.cfile-row .cfile-kind {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--faint);
+}
+.cfile-row.link { cursor: pointer; }
+.cfile-row.link:hover { background: var(--mod-bg); }
+.cfile-back {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ren-ink);
+  cursor: pointer;
+  margin-bottom: 14px;
+}
+.cfile-back:hover { text-decoration: underline; }
+
+.obj-card.dim { opacity: 0.16; filter: saturate(0.3); }
+
+/* quick search */
+#search {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 460px;
+  background: var(--card);
+  border: 1px solid var(--hair-strong);
+  border-radius: 14px;
+  box-shadow: 0 14px 48px rgba(30, 30, 25, 0.18);
+  z-index: 60;
+  overflow: hidden;
+}
+#search input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: 13px var(--mono);
+  color: var(--ink);
+  padding: 12px 16px;
+}
+#search-hits { max-height: 320px; overflow-y: auto; padding: 0 6px 6px; }
+.hit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.hit:hover { background: var(--mod-bg); }
+.hit-dot { width: 7px; height: 7px; border-radius: 3px; flex: none; background: var(--faint); }
+.hit-commit .hit-dot { background: var(--commit); }
+.hit-file .hit-dot { background: var(--blob); }
+.hit-ref .hit-dot { background: var(--ink); }
+.hit-object .hit-dot { background: var(--tree); }
+.hit-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hit-detail { color: var(--faint); font-size: 10px; font-family: var(--mono); flex: none; }
 
 img.full { max-width: 100%; border: 1px solid var(--hair); border-radius: 10px; }
 
