@@ -194,7 +194,12 @@ export class Scene {
   }
 }
 
-/** Keyed DOM reconciliation with enter/leave animations. */
+/** Keyed DOM reconciliation with enter/leave animations.
+ * Churn thresholds: a storm (git gc, huge checkout) swaps out so many nodes
+ * that playing hundreds of animations is pure jank — beyond them, swaps are instant. */
+const ENTER_ANIM_MAX = 60;
+const LEAVE_ANIM_MAX = 40;
+
 export function keyedSync<K>(
   existing: Map<K, HTMLElement>,
   container: HTMLElement,
@@ -202,29 +207,39 @@ export function keyedSync<K>(
   flashKeys?: Set<K>,
 ): void {
   const seen = new Set<K>();
+  let entering = 0;
+  let leaving = 0;
+  for (const [k] of existing) if (!next.some((n) => n.key === k)) leaving++;
   for (const item of next) {
     seen.add(item.key);
-    let el = existing.get(item.key);
-    const isNew = !el;
-    if (!el) {
-      el = item.make();
-      existing.set(item.key, el);
-      el.classList.add("enter");
-      el.addEventListener("animationend", () => el!.classList.remove("enter"), { once: true });
+    let el0 = existing.get(item.key);
+    const isNew = !el0;
+    if (!el0) {
+      const fresh = item.make();
+      existing.set(item.key, fresh);
+      el0 = fresh;
+      if (++entering <= ENTER_ANIM_MAX) {
+        fresh.classList.add("enter");
+        fresh.addEventListener("animationend", () => fresh.classList.remove("enter"), { once: true });
+      }
     }
-    item.update(el!);
-    if (isNew) container.appendChild(el!);
+    item.update(el0!);
+    if (isNew) container.appendChild(el0!);
     if (flashKeys?.has(item.key) && !isNew) {
-      el!.classList.add("flash");
-      setTimeout(() => el!.classList.remove("flash"), 1900);
+      el0!.classList.add("flash");
+      setTimeout(() => el0!.classList.remove("flash"), 1900);
     }
   }
   for (const [k, el] of [...existing]) {
     if (seen.has(k)) continue;
     existing.delete(k);
     el.classList.remove("enter");
-    el.classList.add("leave");
-    setTimeout(() => el.remove(), 380);
+    if (++leaving <= LEAVE_ANIM_MAX) {
+      el.classList.add("leave");
+      setTimeout(() => el.remove(), 380);
+    } else {
+      el.remove();
+    }
   }
 }
 

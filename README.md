@@ -10,26 +10,35 @@ draggable scene, and then watches the repository: when you commit, branch,
 stage, or rewrite history, the scene animates the change as it happens.
 
 <p align="center">
+  <img src="docs/live.gif" alt="gitv reacting to live commits, staging and merges" width="880">
+</p>
+
+<p align="center">
   <img src="docs/overview.png" alt="gitv overview — commit graph, change flow, object field" width="880">
 </p>
+
+English | [中文说明](README.zh-CN.md)
 
 ## What you see
 
 - **HISTORY** — the commit graph with real lane routing, branch / tag / HEAD
-  pills, merge curves, and dashed stubs where history is truncated. Drag any
-  commit; the edges follow.
+  pills, merge curves, relative timestamps, and dashed stubs where history is
+  truncated. Hover a commit to light up its ancestry edges; drag any commit
+  and the edges follow.
 - **CHANGES** — the `worktree → index → HEAD` flow, exactly as git status sees
   it. Chips move between columns as you edit, `git add`, and commit. Click a
   chip for a content diff between the two states that differ.
 - **OBJECTS ON DISK** — every object in the database, grouped by type, sized
   by content. Loose objects are clean white cards; packed objects carry a
-  dashed border and a darker fill; delta objects get a `Δ`. Text blobs show
-  their first lines, images render as thumbnails, large and binary blobs are
-  woven into a byte tapestry (one cell per byte, colored by value class).
+  dashed border and a darker fill. Text blobs show their first lines, images
+  render as thumbnails, large and binary blobs are woven into a byte tapestry
+  (one cell per byte, colored by value class).
 - **Inspector** — click any object and read the parsing story top to bottom:
-  where the bytes live → the zlib stream → the inflated `type size\0` header
-  (highlighted) → the parsed payload → an integrity check that re-hashes the
-  bytes and reproduces the object's name.
+  where the bytes live → the zlib stream → the inflated `type size\0` header →
+  the parsed payload → an integrity check that re-hashes the bytes and
+  reproduces the object's name. Hovering a parsed field highlights the exact
+  bytes it was read from; delta objects show their full chain, hop by hop,
+  down to the base.
 
 <p align="center">
   <img src="docs/inspector.png" alt="object inspector: raw bytes to parsed commit" width="700">
@@ -48,16 +57,21 @@ stage, or rewrite history, the scene animates the change as it happens.
 gitv watches the worktree *and* `.git`. Commit, branch, stage, stash, amend,
 run `git gc` — the scene diffs the new model against the old one and animates
 only what changed: commits pop in, ref pills slide along the graph, chips hop
-between columns, new objects flash in the field. The connection dot in the HUD
-is the SSE heartbeat.
+between columns, new objects flash in the field. A `git gc` that rewrites the
+entire pack mid-flight just works. The connection dot in the HUD is the SSE
+heartbeat.
 
-## Scales
+## Made for questions
 
-Parsing is byte-level but cache-aware (pack summaries, immutable object
-types, warm rescans). A synthetic 1,500-commit / 7,600-object repository
-scans cold in ~160 ms and re-scans in ~65 ms, so live updates stay smooth.
-The object field caps itself (loose objects always win a slot) and the
-inspector streams on demand.
+- **What exactly changed in this commit?** Every commit lists its changed
+  files (hand-rolled diff-tree against the first parent); click one for the
+  line diff.
+- **What is inside this commit?** Inspecting one dims every object it
+  doesn't contain — its tree and blobs stay lit in the field.
+- **Where is that file / commit / object?** Press `/` (or Ctrl+K) and type a
+  path, sha prefix, branch or subject; Enter jumps the camera there.
+- **Was this blob stored as a delta?** Delta objects show their chain —
+  every hop's sha, type and sizes — down to the solid base.
 
 <p align="center">
   <img src="docs/scale.png" alt="1,500-commit repository" width="700">
@@ -76,9 +90,10 @@ bun run src/cli.ts --help
 From a checkout of gitv itself:
 
 ```sh
-bun run demo      # builds demo-repo/ and you can serve it
+bun run demo      # builds demo-repo/ — a repo with everything worth looking at
 bun test          # parsers verified against git's own output
 bun x tsc --noEmit
+bun run scripts/record.ts   # records docs/live.gif
 ```
 
 ## How it works
@@ -93,14 +108,14 @@ fixture repository:
 | `pack.ts`        | `.idx` v2 fanout/SHA/offset tables, pack entry headers, ofs/ref delta chains, copy/insert delta instructions |
 | `indexfile.ts`   | `.git/index` (DIRC) v2/v3/v4, extensions, trailing checksum     |
 | `refs.ts`        | `HEAD`, loose refs, `packed-refs` with peeled annotations       |
-| `objects.ts`     | commit / tree / annotated-tag payloads                          |
+| `objects.ts`     | commit / tree / annotated-tag payloads, with per-field byte ranges |
 | `diff.ts`        | Myers line diff with prefix/suffix trimming                     |
 
 The scanner (`src/scan/repo.ts`) assembles a full `RepoModel` from those
 bytes — every object's type, size, and storage (loose file or pack+offset) —
 and diffs consecutive models into events. The server (`src/server.ts`) serves
-the model, on-demand parse stages, raw bytes, diffs, and an SSE stream; the
-frontend (`web/`) renders and animates.
+the model, on-demand parse stages, raw bytes, per-commit diffs, and an SSE
+stream; the frontend (`web/`) renders and animates.
 
 `git status` (porcelain v2) and, on huge repositories, `git rev-list` are the
 only places gitv borrows the git CLI — for change classification and history

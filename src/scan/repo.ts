@@ -431,6 +431,20 @@ export class RepoScanner {
       return null;
     })();
 
+    // delta chain, walked hop by hop inside the pack
+    let deltaChain: { depth: number; entries: { sha: string | null; offset: number; role: string; type: ObjType; resultSize: number; deltaSize: number | null; via: string | null }[] } | null = null;
+    if (obj.where.kind === "pack" && obj.delta) {
+      const hit = this.shaToPack.get(sha);
+      if (hit) {
+        try {
+          const chain = await hit.pf.chainOf(obj.where.offset);
+          deltaChain = { depth: chain.entries.length - 1, entries: chain.entries };
+        } catch {
+          /* chain view is best-effort */
+        }
+      }
+    }
+
     return {
       sha,
       type: obj.type,
@@ -441,6 +455,7 @@ export class RepoScanner {
       compressedHead: compressedBytes,
       contentHead: [...obj.content.subarray(0, 4096)],
       contentLength: obj.content.length,
+      deltaChain,
       parsed,
     };
   }

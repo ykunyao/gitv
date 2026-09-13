@@ -103,7 +103,28 @@ export class Inspector {
     chip.append(kind, el("span", "mono", pathText));
     srcStage.appendChild(chip);
 
-    // 2 — compressed bytes
+    // 2 — delta chain, walked hop by hop inside the pack
+    if (detail.deltaChain && detail.where.kind === "pack") {
+      const dc = detail.deltaChain;
+      const packName = detail.where.pack.replace(/^pack-/, "").replace(/\.pack$/, "");
+      const dcStage = this.stage(`DELTA CHAIN · depth ${dc.depth} · pack ${packName.slice(0, 8)}`);
+      const list = el("div", "dchain");
+      dc.entries.forEach((e, i) => {
+        const node = el("div", `dchain-node ${e.role}${e.sha ? " link" : ""}`);
+        const dot = el("span", "kind-dot");
+        dot.style.background = TYPE_COLORS[e.type] ?? "var(--dim)";
+        const shaLabel = el("span", "dchain-sha", e.sha ? e.sha.slice(0, 7) : `@${e.offset}`);
+        const type = el("span", "dchain-type", e.type);
+        const size = el("span", "dchain-size", e.role === "base" ? fmtBytes(e.resultSize) : `Δ ${fmtBytes(e.deltaSize ?? 0)} → ${fmtBytes(e.resultSize)}`);
+        node.append(dot, shaLabel, type, size);
+        if (e.sha && e.sha !== detail.sha) node.addEventListener("click", () => this.openObject(e.sha!));
+        list.appendChild(node);
+        if (i < dc.entries.length - 1) list.appendChild(el("div", "dchain-arrow", "↓ stored as delta against"));
+      });
+      dcStage.appendChild(list);
+    }
+
+    // 3 — compressed bytes
     if (detail.compressedHead?.length) {
       const cStage = this.stage(detail.where.kind === "pack" ? "COMPRESSED (zlib, in pack)" : "COMPRESSED (zlib)");
       cStage.appendChild(hexdump(new Uint8Array(detail.compressedHead)).el);

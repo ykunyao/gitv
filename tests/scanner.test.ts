@@ -91,6 +91,26 @@ describe("RepoScanner", () => {
     const detail = (await s.objectDetail(delta!.sha))!;
     expect(detail.delta).toBe(true);
     expect((detail.integrity as { ok: boolean }).ok).toBe(true);
+
+    // chain depth must match what git's verify-pack reports
+    const detail2 = detail as unknown as { deltaChain: { depth: number; entries: { sha: string | null; role: string; type: string }[] } };
+    const chain = detail2.deltaChain!;
+    expect(chain).toBeTruthy();
+    const verify = git(fx.dir, ["verify-pack", "-v", join(fx.dir, ".git", "objects", "pack", delta!.where.kind === "pack" ? delta!.where.pack : "")]);
+    let depth = -1;
+    for (const l of verify.split("\n")) {
+      const parts = l.trim().split(/\s+/);
+      if (parts[0] === delta!.sha && parts.length >= 7) depth = Number(parts[5]);
+    }
+    expect(depth).toBeGreaterThanOrEqual(1);
+    expect(chain.depth).toBe(depth);
+    expect(chain.entries.length).toBe(depth + 1);
+    expect(chain.entries[0]!.role).toBe("self");
+    expect(chain.entries.at(-1)!.role).toBe("base");
+    // every hop shares the base's real type
+    const baseType = chain.entries.at(-1)!.type;
+    for (const e of chain.entries) expect(e.type).toBe(baseType);
+    for (const e of chain.entries) expect(e.sha).toBeTruthy();
   });
 
   test("blob diff", async () => {

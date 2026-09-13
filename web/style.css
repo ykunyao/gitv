@@ -534,6 +534,30 @@ pre.hexdump .ascii { color: var(--dim); }
 }
 .source-chip .kind.packed { background: var(--dim); }
 
+/* delta chain diagram */
+.dchain { display: flex; flex-direction: column; }
+.dchain-node {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--hair);
+  border-radius: 9px;
+  padding: 6px 10px;
+}
+.dchain-node.self { border-color: var(--ink); }
+.dchain-node.link { cursor: pointer; }
+.dchain-node.link:hover { background: var(--mod-bg); }
+.dchain-node .dchain-type { color: var(--dim); }
+.dchain-node .dchain-size { margin-left: auto; color: var(--dim); }
+.dchain-arrow {
+  color: var(--faint);
+  font-size: 9.5px;
+  padding: 3px 0 3px 16px;
+}
+
 .check-ok { color: var(--add-ink); font-weight: 600; }
 .check-bad { color: var(--del-ink); font-weight: 600; }
 

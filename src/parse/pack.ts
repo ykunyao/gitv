@@ -208,13 +208,73 @@ export class PackFile {
   }
 
   /** Partially inflate a delta to read its src/dst size varints. */
-  private async deltaResultSize(h: PackEntryHeader): Promise<number> {
+  async deltaResultSize(h: PackEntryHeader): Promise<number> {
     const head = await this.getBytes(h.dataOff, 256);
     const partial = inflateSync(head, { finishFlush: ZLIB.Z_SYNC_FLUSH });
     let p = 0;
     const src = readLeVarint(partial, p); p += src.read;
     const dst = readLeVarint(partial, p);
     return dst.value;
+  }
+
+  /**
+   * Delta chain from the object at `offset` down to its solid base, with
+   * every hop resolved to a sha, real type and sizes — raw bytes only.
+   */
+  async chainOf(offset: number): Promise<{
+    entries: {
+      sha: string | null;
+      offset: number;
+      role: "base" | "delta" | "self";
+      type: ObjType;
+      resultSize: number; // size of the object this entry reconstructs
+      deltaSize: number | null; // uncompressed size of the delta instructions
+      via: "ofs" | "ref" | null;
+    }[];
+  }> {
+    const rev = new Map<number, string>();
+    for (let i = 0; i < this.idx.count; i++) rev.set(this.idx.offsets[i]!, this.idx.shas[i]!);
+
+    const entries: {
+      sha: string | null;
+      offset: number;
+      role: "base" | "delta" | "self";
+      type: ObjType;
+      resultSize: number;
+      deltaSize: number | null;
+      via: "ofs" | "ref" | null;
+    }[] = [];
+    let cur = offset;
+    for (let depth = 0; depth < 128; depth++) {
+      const h = await this.header(cur);
+      if (h.type === 6 || h.type === 7) {
+        entries.push({
+          sha: rev.get(cur) ?? null,
+          offset: cur,
+          role: entries.length === 0 ? "self" : "delta",
+          type: "blob", // resolved once the base is known
+          resultSize: await this.deltaResultSize(h),
+          deltaSize: h.size,
+          via: h.type === 6 ? "ofs" : "ref",
+        });
+        cur = h.type === 6 ? h.baseOffset! : await this.resolveRef(h.baseSha!);
+      } else {
+        const t = packTypeToObjType(h.type);
+        if (!t) throw new Error(`bad pack type ${h.type}`);
+        entries.push({
+          sha: rev.get(cur) ?? null,
+          offset: cur,
+          role: "base",
+          type: t,
+          resultSize: h.size,
+          deltaSize: null,
+          via: null,
+        });
+        for (const e of entries) e.type = t;
+        return { entries };
+      }
+    }
+    throw new Error("delta chain too deep");
   }
 
   /** Fully resolve the object at offset, inflating and applying any delta chain. */

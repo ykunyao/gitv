@@ -14,6 +14,18 @@ export interface ObjectDetail {
   compressedHead: number[] | null;
   contentHead: number[];
   contentLength: number;
+  deltaChain: {
+    depth: number;
+    entries: {
+      sha: string | null;
+      offset: number;
+      role: "self" | "delta" | "base";
+      type: "commit" | "tree" | "blob" | "tag";
+      resultSize: number;
+      deltaSize: number | null;
+      via: "ofs" | "ref" | null;
+    }[];
+  } | null;
   parsed: unknown;
 }
 
