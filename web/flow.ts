@@ -17,6 +17,7 @@ export interface FlowTarget {
 interface FlowStore extends HTMLElement {
   __wrap?: HTMLElement;
   __cols?: Record<"worktree" | "index" | "head", { el: HTMLElement; map: Map<string, HTMLElement> }>;
+  __relayout?: () => void;
 }
 
 const headTreeCache = new Map<string, TreeFlatEntry[]>();
@@ -25,9 +26,11 @@ export function renderFlow(
   zone: HTMLElement,
   model: RepoModel,
   flashKeys: Set<string>,
+  relayout: () => void,
   onOpen: (target: FlowTarget) => void,
 ): { width: number; height: number } {
   const store = zone as FlowStore;
+  store.__relayout = relayout;
   if (!store.__wrap) {
     const wrap = el("div", "flow-wrap");
     const mk = (label: string): { el: HTMLElement; map: Map<string, HTMLElement> } => {
@@ -52,14 +55,14 @@ export function renderFlow(
   if (headTreeSha && !headPaths) {
     void getTree(headTreeSha).then((entries) => {
       headTreeCache.set(headTreeSha, entries);
-      // the tree listing arrives late; paint it into the HEAD column directly
-      if (wrap.isConnected && zoneContains(zone, wrap)) {
-        headPaths = entries;
-        const items = entries.filter((e) => e.kind === "blob").slice(0, 260)
-          .map((e) => chipItem(e.path, "clean", undefined, "head", onOpen, e.sha));
-        keyedSync(head.map, head.el, items, new Set());
-        head.el.classList.toggle("empty", !items.length);
-      }
+      if (!wrap.isConnected) return;
+      // tree listing arrived late: repaint the column and ask for a full
+      // relayout so the zone height grows to actually contain it
+      const items = entries.filter((e) => e.kind === "blob").slice(0, 260)
+        .map((e) => chipItem(e.path, "clean", undefined, "head", onOpen, e.sha));
+      keyedSync(head.map, head.el, items, new Set());
+      head.el.classList.toggle("empty", !items.length);
+      store.__relayout?.();
     });
   }
 
@@ -82,12 +85,9 @@ export function renderFlow(
   head.el.classList.toggle("empty", !hItems.length);
   keyedSync(head.map, head.el, hItems, flashKeys);
 
-  const rows = Math.max(files.length, iItems.length, wItems.length, 6);
-  return { width: 3 * 210 + 2 * 40 + 36, height: Math.min(rows, 260) * 26 + 60 };
-}
-
-function zoneContains(zone: HTMLElement, node: HTMLElement): boolean {
-  return zone.contains(node);
+  // measure the real columns — chip counts lie (fonts, wrapping, late trees)
+  const contentH = Math.max(worktree.el.scrollHeight, index.el.scrollHeight, head.el.scrollHeight, 60);
+  return { width: 3 * 210 + 2 * 40 + 36, height: contentH + 36 };
 }
 
 function arrow(flip: boolean): HTMLElement {

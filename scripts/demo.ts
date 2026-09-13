@@ -5,6 +5,52 @@
 import { rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { deflateSync } from "node:zlib";
+
+/** Encode a real PNG (RGB8) so the browser actually renders it. */
+function makePng(w: number, h: number): Buffer {
+  const crcTable: number[] = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crcTable[n] = c >>> 0;
+  }
+  const crc32 = (buf: Buffer): number => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff]! ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const out = Buffer.alloc(8 + data.length + 4);
+    out.writeUInt32BE(data.length, 0);
+    out.write(type, 4, "latin1");
+    data.copy(out, 8);
+    out.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, "latin1"), data])), 8 + data.length);
+    return out;
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type: RGB
+  const raw = Buffer.alloc(h * (1 + w * 3));
+  let p = 0;
+  for (let y = 0; y < h; y++) {
+    raw[p++] = 0; // filter: none
+    for (let x = 0; x < w; x++) {
+      const t = (x + y) / (w + h);
+      raw[p++] = Math.round(255 - t * (255 - 61)); // orange → blue diagonal
+      raw[p++] = Math.round(122 - t * (122 - 165) + 30 * Math.sin(x / 9));
+      raw[p++] = Math.round(69 + t * (245 - 69));
+    }
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(raw, { level: 9 })),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 
 const dir = join(import.meta.dir, "..", "demo-repo");
 rmSync(dir, { recursive: true, force: true });
@@ -70,10 +116,7 @@ git(["commit", "-m", "chore: drop canvas experiment"]);
 git(["tag", "-a", "v0.2", "-m", "second cut — stable enough for a demo"]);
 
 // binary + big text (they will be loose until the repack below)
-const png = Buffer.alloc(2048);
-png[0] = 0x89; png[1] = 0x50; png[2] = 0x4e; png[3] = 0x47;
-for (let i = 8; i < png.length; i++) png[i] = (i * 7 + (i % 13) * 19) & 0xff;
-write("assets/logo.png", png);
+write("assets/logo.png", makePng(160, 160));
 const bigLines: string[] = [];
 for (let i = 0; i < 20000; i++) bigLines.push(`${i}\t${"lorem ipsum dolor sit amet ".repeat(2)}${i % 97}`);
 write("data/words.txt", bigLines.join("\n") + "\n");

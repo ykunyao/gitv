@@ -45,7 +45,14 @@ html, body {
 
 /* ---------- stage & world ---------- */
 
-#stage { position: fixed; inset: 0; cursor: grab; }
+#stage {
+  position: fixed;
+  inset: 0;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
 #stage.panning { cursor: grabbing; }
 
 #world {
@@ -85,8 +92,9 @@ html, body {
   overflow: visible;
   pointer-events: none;
 }
-.edge-svg path { fill: none; stroke-width: 2; stroke-linecap: round; }
+.edge-svg path { fill: none; stroke-width: 2.5; stroke-linecap: round; }
 .edge-svg path.ghost { stroke-dasharray: 2 5; opacity: 0.45; }
+.edge-svg path.hl { stroke-width: 4; opacity: 1; }
 
 .commit-row {
   position: absolute;
@@ -100,23 +108,29 @@ html, body {
 .commit-row:active { cursor: grabbing; }
 
 .commit-dot {
-  width: 13px; height: 13px;
+  width: 14px; height: 14px;
   border-radius: 50%;
   flex: none;
   border: 2.5px solid #fff;
   outline: 1px solid var(--hair-strong);
   position: relative;
 }
-.commit-row.head-commit .commit-dot {
+.commit-row.head-commit .commit-dot,
+.commit-row.selected .commit-dot {
   outline: 2px solid var(--ink);
   outline-offset: 1.5px;
 }
 
 .commit-row .subject {
   color: var(--ink);
-  max-width: 340px;
+  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.commit-row .when {
+  color: var(--faint);
+  font-size: 11px;
 }
 
 .commit-row .sha {
@@ -275,13 +289,19 @@ html, body {
 .obj-card .card-tag .size { font-weight: 600; }
 
 .card-preview {
-  padding: 8px 10px;
+  position: absolute;
+  top: 28px;
+  left: 10px;
+  right: 10px;
+  bottom: 20px;
   font-family: var(--mono);
-  font-size: 9.5px;
-  line-height: 1.5;
+  font-size: 10px;
+  line-height: 14px;
   color: var(--ink);
   overflow: hidden;
   opacity: 0.92;
+  -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
 }
 .card-preview .ln { display: block; white-space: pre; }
 .card-preview .dim { color: var(--faint); }
@@ -301,7 +321,30 @@ html, body {
   white-space: nowrap;
 }
 
-canvas.tapestry { display: block; border-radius: 6px; }
+canvas.tapestry { display: block; position: absolute; top: 30px; left: 10px; border-radius: 6px; }
+.card-preview canvas.tapestry-in-preview { display: block; position: static; border-radius: 6px; }
+
+img.thumb {
+  position: absolute;
+  inset: 30px 10px 24px;
+  margin: auto;
+  max-width: calc(100% - 20px);
+  max-height: calc(100% - 54px);
+  border-radius: 6px;
+  border: 1px solid var(--hair);
+}
+
+.obj-card.ghost-card {
+  border-style: dashed;
+  background: transparent;
+  color: var(--faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 600 11px var(--mono);
+  cursor: default;
+}
+.obj-card.ghost-card:hover { box-shadow: none; }
 
 .obj-card.tree-card svg { display: block; margin: 8px auto 2px; }
 
@@ -509,11 +552,22 @@ pre.hexdump .ascii { color: var(--dim); }
 
 .diff-view { font-family: var(--mono); font-size: 11px; line-height: 1.5; border: 1px solid var(--hair); border-radius: 10px; overflow: auto; max-height: 520px; }
 .diff-view .row { display: flex; }
-.diff-view .row .gut { flex: none; width: 58px; text-align: right; padding-right: 8px; color: var(--faint); background: var(--bg); user-select: none; position: sticky; left: 0; }
+.diff-view .gut-a, .diff-view .gut-b {
+  flex: none;
+  width: 34px;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--faint);
+  background: var(--bg);
+  user-select: none;
+  position: sticky;
+}
+.diff-view .gut-a { left: 0; }
+.diff-view .gut-b { left: 34px; border-right: 1px solid var(--hair); }
 .diff-view .row .tx { white-space: pre; padding-right: 10px; }
 .diff-view .row.ins { background: var(--add-bg); } .diff-view .row.ins .tx { color: var(--add-ink); }
 .diff-view .row.del { background: var(--del-bg); } .diff-view .row.del .tx { color: var(--del-ink); }
-.diff-view .row.ins .gut, .diff-view .row.del .gut { background: transparent; }
+.diff-view .row.ins .gut-a, .diff-view .row.ins .gut-b, .diff-view .row.del .gut-a, .diff-view .row.del .gut-b { background: transparent; }
 
 .tabs { display: flex; gap: 4px; margin-bottom: 10px; }
 .tabs button {
@@ -536,6 +590,9 @@ pre.hexdump .ascii { color: var(--dim); }
 .tree-table .kind-dot { display: inline-block; width: 7px; height: 7px; border-radius: 2.5px; margin-right: 7px; }
 
 img.full { max-width: 100%; border: 1px solid var(--hair); border-radius: 10px; }
+
+/* the hero: history gets the strongest card */
+#zone-graph { box-shadow: 0 1px 2px rgba(30, 30, 25, 0.05), 0 14px 40px rgba(30, 30, 25, 0.08); }
 
 .more-note { color: var(--faint); font-size: 11px; margin-top: 8px; }
 

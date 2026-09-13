@@ -20,6 +20,9 @@ export class Inspector {
   private title: HTMLElement;
   private glyph: HTMLElement;
   private currentToken = 0;
+  /** sha of the object currently being inspected (drives scene selection). */
+  currentSha: string | null = null;
+  onChange: ((sha: string | null) => void) | null = null;
 
   constructor() {
     this.panel = document.getElementById("inspector")!;
@@ -39,6 +42,8 @@ export class Inspector {
   close(): void {
     this.panel.hidden = true;
     this.currentToken++;
+    this.currentSha = null;
+    this.onChange?.(null);
   }
 
   private begin(title: string, type: string): number {
@@ -75,6 +80,8 @@ export class Inspector {
 
   async openObject(sha: string): Promise<void> {
     const token = this.begin(sha.slice(0, 7) + " …", "blob");
+    this.currentSha = sha;
+    this.onChange?.(sha);
     let detail: ObjectDetail;
     try {
       detail = await getObjectDetail(sha);
@@ -247,6 +254,8 @@ export class Inspector {
 
   async openChip(target: FlowTarget): Promise<void> {
     const token = this.begin(target.path, "blob");
+    this.currentSha = target.indexSha ?? target.headSha ?? null;
+    this.onChange?.(this.currentSha);
 
     const sides = await this.resolveSides(target);
     if (this.stale(token)) return;
@@ -434,9 +443,10 @@ function diffView(d: DiffPayload, aLabel: string, bLabel: string): HTMLElement {
   const frag = document.createDocumentFragment();
   for (const op of d.ops!) {
     const row = el("div", `row ${op.t}`);
-    const gut = el("span", "gut", op.t === "eq" ? String((op.a ?? 0) + 1) : op.t === "del" ? String((op.a ?? 0) + 1) : String((op.b ?? 0) + 1));
+    const ga = el("span", "gut-a", op.a >= 0 ? String(op.a + 1) : "");
+    const gb = el("span", "gut-b", op.b >= 0 ? String(op.b + 1) : "");
     const tx = op.t === "eq" ? d.aLines![op.a!] ?? "" : op.t === "del" ? d.aLines![op.a!] ?? "" : d.bLines![op.b!] ?? "";
-    row.append(gut, el("span", "tx", tx === "" ? " " : tx));
+    row.append(ga, gb, el("span", "tx", tx === "" ? " " : tx));
     frag.appendChild(row);
   }
   view.appendChild(frag);

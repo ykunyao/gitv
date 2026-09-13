@@ -97,13 +97,16 @@ export class Scene {
   private wire(): void {
     this.stage.addEventListener("wheel", (e) => {
       e.preventDefault();
-      if (e.ctrlKey || e.metaKey || !e.shiftKey) {
+      if (e.ctrlKey || e.metaKey) {
+        // pinch / ctrl+wheel zooms (canvas convention)
         const rect = this.stage.getBoundingClientRect();
         this.zoomTo(this.scale * Math.exp(-e.deltaY * 0.0016), e.clientX - rect.left, e.clientY - rect.top);
       } else {
-        this.tx -= e.deltaY;
-        this.apply();
+        // plain wheel & trackpad scroll pan the sheet, like a document
+        this.tx -= e.deltaX + (e.shiftKey ? e.deltaY : 0);
+        this.ty -= e.shiftKey ? 0 : e.deltaY;
       }
+      this.apply();
       this.onUserTransform?.();
     }, { passive: false });
 
@@ -112,6 +115,7 @@ export class Scene {
     this.stage.addEventListener("pointerdown", (e) => {
       const t = e.target as HTMLElement;
       if (t.closest(".commit-row, .obj-card, .chip, button, input, a, #inspector")) return;
+      e.preventDefault();
       panning = true;
       sx = e.clientX; sy = e.clientY;
       stx = this.tx; sty = this.ty;
@@ -124,10 +128,12 @@ export class Scene {
       this.ty = sty + (e.clientY - sy);
       this.apply();
     });
-    this.stage.addEventListener("pointerup", () => {
+    const endPan = (): void => {
       panning = false;
       this.stage.classList.remove("panning");
-    });
+    };
+    this.stage.addEventListener("pointerup", endPan);
+    this.stage.addEventListener("pointercancel", endPan);
   }
 
   /** Make an element draggable in world coordinates; reports total offsets. */

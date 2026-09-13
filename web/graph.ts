@@ -5,9 +5,9 @@ import type { CommitInfo, RepoModel } from "./api.ts";
 import { el, place, keyedSync, type PosStore, type Scene } from "./scene.ts";
 
 export const PALETTE = ["#ff7a45", "#3da5f5", "#2fbf71", "#9d7bf5", "#f2b705", "#ff5c8a", "#00b5c3"];
-export const LANE_W = 42;
-export const ROW_H = 44;
-const PAD = 22;
+export const LANE_W = 48;
+export const ROW_H = 54;
+const PAD = 24;
 
 export interface GraphNode {
   sha: string;
@@ -148,7 +148,20 @@ export function refsByCommit(model: RepoModel): Map<string, GraphRefs> {
 }
 
 export function graphWidth(layout: GraphLayout): number {
-  return PAD * 2 + layout.lanes * LANE_W + 430;
+  return PAD * 2 + layout.lanes * LANE_W + 470;
+}
+
+export function fmtWhen(ms: number): string {
+  const m = Math.floor((Date.now() - ms) / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo`;
+  return `${Math.floor(mo / 12)}y`;
 }
 
 export function renderGraph(
@@ -158,6 +171,7 @@ export function renderGraph(
   pos: PosStore,
   scene: Scene,
   flashShas: Set<string>,
+  selectedSha: string | null,
   onOpen: (sha: string) => void,
 ): { width: number; height: number } {
   const refMap = refsByCommit(model);
@@ -190,6 +204,8 @@ export function renderGraph(
       path.setAttribute("d", `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`);
       path.setAttribute("stroke", edge.color);
       path.setAttribute("opacity", "0.75");
+      path.dataset.from = edge.from;
+      path.dataset.to = edge.to;
       svg!.appendChild(path);
     }
     for (const sha of layout.ghosts) {
@@ -204,6 +220,12 @@ export function renderGraph(
   };
   drawEdges();
 
+  const highlightEdges = (sha: string, on: boolean): void => {
+    for (const p of svg!.querySelectorAll<SVGPathElement>(`path[data-from="${sha}"], path[data-to="${sha}"]`)) {
+      p.classList.toggle("hl", on);
+    }
+  };
+
   const existing = ((zone as GraphZoneStore).__nodes ??= new Map<string, HTMLElement>());
 
   const items = layout.order.map((sha) => {
@@ -214,14 +236,18 @@ export function renderGraph(
       key: sha,
       make: (): HTMLElement => {
         const row = el("div", "commit-row");
+        row.dataset.sha = sha;
         const dot = el("span", "commit-dot");
         const subj = el("span", "subject");
+        const when = el("span", "when", fmtWhen(c.committer.when));
         const shaEl = el("span", "sha", sha.slice(0, 7));
-        row.append(dot, subj, shaEl);
+        row.append(dot, subj, when, shaEl);
         row.addEventListener("click", () => {
           if ((row as DragState).__dragged) return;
           onOpen(sha);
         });
+        row.addEventListener("mouseenter", () => highlightEdges(sha, true));
+        row.addEventListener("mouseleave", () => highlightEdges(sha, false));
         scene.draggable(row, {
           onStart: () => {
             row.classList.add("dragging");
@@ -246,11 +272,13 @@ export function renderGraph(
         const off = pos.get("graph", sha) ?? { dx: 0, dy: 0 };
         place(row, PAD + n.lane * LANE_W + off.dx, PAD + n.row * ROW_H + off.dy);
         row.classList.toggle("head-commit", refs?.isHead ?? false);
+        row.classList.toggle("selected", row.dataset.sha === selectedSha);
         const dot = row.querySelector<HTMLElement>(".commit-dot")!;
         dot.style.background = n.color;
 
         for (const p of [...row.querySelectorAll(".pill")]) p.remove();
         const subj = row.querySelector<HTMLElement>(".subject")!;
+        const when = row.querySelector<HTMLElement>(".when")!;
         const shaEl = row.querySelector<HTMLElement>(".sha")!;
         if (refs) {
           const pills: HTMLElement[] = [];
@@ -261,6 +289,7 @@ export function renderGraph(
           for (const p of pills) row.insertBefore(p, subj);
         }
         subj.textContent = c.subject || "(no message)";
+        when.textContent = fmtWhen(c.committer.when);
         shaEl.textContent = sha.slice(0, 7);
       },
     };

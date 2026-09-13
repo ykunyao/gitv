@@ -12,6 +12,14 @@ const world = document.getElementById("world")!;
 const scene = new Scene(stage, world);
 const inspector = new Inspector();
 
+// keep the scene's selected node in sync with what the inspector shows
+inspector.onChange = (sha): void => {
+  for (const n of document.querySelectorAll(".commit-row.selected, .obj-card.selected")) n.classList.remove("selected");
+  if (!sha) return;
+  document.querySelector(`.commit-row[data-sha="${sha}"]`)?.classList.add("selected");
+  document.querySelector(`.obj-card[data-sha="${sha}"]`)?.classList.add("selected");
+};
+
 const graphZone = el("section", "zone");
 graphZone.id = "zone-graph";
 graphZone.appendChild(el("div", "zone-label", "HISTORY"));
@@ -23,28 +31,39 @@ world.append(graphZone, flowZone, fieldZone);
 
 let posStore = new PosStore("boot");
 let fitDone = false;
+let lastRender: { model: RepoModel; events: ModelEvent[] } | null = null;
 
 function render(model: RepoModel, events: ModelEvent[]): void {
+  lastRender = { model, events };
   const graphFlash = new Set<string>();
-  for (const e of events) if (e.e === "commit-add") graphFlash.add(e.sha);
+  for (const e of events) {
+    if (e.e === "commit-add") graphFlash.add(e.sha);
+    else if (e.e === "head-move" && model.head.sha) graphFlash.add(model.head.sha);
+    else if (e.e === "ref-move" || e.e === "ref-add") {
+      const r = model.refs.find((x) => x.name === e.name);
+      if (r) graphFlash.add(r.kind === "tag" ? r.peeled ?? r.sha : r.sha);
+    }
+  }
 
   // graph
   const layout = model.commits.length
     ? layoutGraph(model.commits)
     : { nodes: new Map(), order: [], edges: [], ghosts: new Set<string>(), lanes: 1, rows: 0 };
-  const graph = renderGraph(graphZone, layout, model, posStore, scene, graphFlash, (sha) => void inspector.openObject(sha));
+  const graph = renderGraph(graphZone, layout, model, posStore, scene, graphFlash, inspector.currentSha, (sha) => void inspector.openObject(sha));
 
   // flow
   const flowFlash = new Set<string>();
   for (const e of events) {
     if (e.e === "index") for (const p of [...e.added, ...e.modified, ...e.removed]) { flowFlash.add(`index/${p}`); flowFlash.add(`worktree/${p}`); }
   }
-  const flow = renderFlow(flowZone, model, flowFlash, (target) => void inspector.openChip(target));
+  const flow = renderFlow(flowZone, model, flowFlash, () => {
+    if (lastRender) render(lastRender.model, []);
+  }, (target) => void inspector.openChip(target));
 
   // field
   const fieldFlash = new Set<string>();
   for (const e of events) if (e.e === "object-add" || e.e === "object-del") fieldFlash.add(e.sha);
-  const field = renderField(fieldZone, model, posStore, scene, fieldFlash, (sha) => void inspector.openObject(sha));
+  const field = renderField(fieldZone, model, posStore, scene, fieldFlash, inspector.currentSha, (sha) => void inspector.openObject(sha));
 
   // zones: graph top-left, flow to its right, field below both
   const gap = 64;
@@ -76,7 +95,10 @@ function hud(model: RepoModel): void {
   const head = document.getElementById("hud-head")!;
   const branch = model.head.detached ? "detached" : model.head.short ?? "…";
   const dirty = model.status.staged.length + model.status.unstaged.length + model.status.untracked.length;
-  head.textContent = `${branch}${model.head.sha ? "@" + model.head.sha.slice(0, 7) : ""}${dirty ? ` · ${dirty} changed` : ""} · ${model.counts.objectsTotal} objects`;
+  const ab = model.status.ahead || model.status.behind
+    ? ` ${model.status.ahead ? "↑" + model.status.ahead : ""}${model.status.behind ? "↓" + model.status.behind : ""}`
+    : "";
+  head.textContent = `${branch}${model.head.sha ? "@" + model.head.sha.slice(0, 7) : ""}${ab}${dirty ? ` · ${dirty} changed` : ""} · ${model.counts.objectsTotal} objects`;
   head.title = "";
 }
 
