@@ -75,6 +75,7 @@ export interface RepoModel {
     objectsProbed: number; // objects with known type/size (may be < total on huge repos)
     objectsTotal: number;
   };
+  packs: { name: string; sizeBytes: number; count: number }[];
   index: {
     entries: IndexEntry[];
     version: number;

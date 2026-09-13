@@ -705,6 +705,21 @@ img.full { max-width: 100%; border: 1px solid var(--hair); border-radius: 10px; 
 
 .more-note { color: var(--faint); font-size: 11px; margin-top: 8px; }
 
+/* packfile map */
+.pack-section { margin-bottom: 18px; }
+.pack-holder { position: relative; border: 1px solid var(--hair); border-radius: 10px; overflow: hidden; background: var(--bg); cursor: crosshair; }
+.pack-canvas, .pack-overlay { position: absolute; left: 0; top: 0; display: block; }
+.pack-holder { height: 100px; }
+.pack-caption {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--dim);
+  padding: 6px 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .empty-tip {
   position: fixed;
   inset: 0;

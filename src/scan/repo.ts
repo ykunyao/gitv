@@ -250,6 +250,9 @@ export class RepoScanner {
         objectsProbed: all.length,
         objectsTotal: this.looseBySha.size + this.shaToPack.size,
       },
+      packs: [...this.packs.values()]
+        .map((p) => ({ name: `${p.name}.pack`, sizeBytes: p.size, count: p.pf.idx.count }))
+        .sort((a, b) => b.sizeBytes - a.sizeBytes),
       index: indexModel,
       status,
       generatedAt: Date.now(),
@@ -539,6 +542,83 @@ export class RepoScanner {
         budget.n--;
       }
     }
+  }
+
+  /**
+   * The full byte map of one pack: every object as a block at its real
+   * offset, with compressed size, type and (for deltas) the base offset —
+   * everything the frontend needs to draw the pack as it lies on disk.
+   */
+  async packDetail(packName: string): Promise<{
+    name: string;
+    sizeBytes: number;
+    count: number;
+    deltas: number;
+    byType: Partial<Record<ObjType, number>>;
+    unpackedTotal: number;
+    truncated: boolean;
+    blocks: { s: string; o: number; c: number; t: ObjType | null; d: 0 | 1; b?: number }[];
+  } | null> {
+    const entry = this.packs.get(packName);
+    if (!entry) return null;
+    const { pf } = entry;
+    const offsets = pf.idx.offsets;
+    const deadline = Date.now() + 4000;
+    let truncated = false;
+
+    // collect (sha, offset) + typed info first; sizes come after sorting,
+    // because idx order is sha-order, not file order
+    const raw: { s: string; o: number; t: ObjType | null; d: 0 | 1; b?: number }[] = [];
+    let deltas = 0;
+    let unpackedTotal = 0;
+    const byType: Partial<Record<ObjType, number>> = {};
+
+    for (let i = 0; i < pf.idx.count; i++) {
+      const off = offsets[i]!;
+      const sha = pf.idx.shas[i]!;
+      const s = this.summaries.get(sha);
+      let type = s?.type ?? null;
+      let delta = s?.delta ?? false;
+      let baseOff: number | undefined;
+      if (!s && Date.now() <= deadline) {
+        try {
+          const probe = await pf.probe(off);
+          this.summaries.set(sha, { type: probe.type, size: probe.size, delta: probe.delta });
+          type = probe.type;
+          delta = probe.delta;
+        } catch {
+          /* leave untyped */
+        }
+      }
+      if (delta) {
+        if (Date.now() <= deadline) {
+          try {
+            const h = await pf.header(off);
+            if (h.type === 6) baseOff = h.baseOffset;
+            deltas++;
+          } catch {
+            /* skip arc */
+          }
+        } else {
+          truncated = true;
+        }
+      }
+      if (type) {
+        byType[type] = (byType[type] ?? 0) + 1;
+        unpackedTotal += this.summaries.get(sha)?.size ?? 0;
+      } else {
+        truncated = true;
+      }
+      raw.push({ s: sha, o: off, t: type, d: delta ? 1 : 0, ...(baseOff !== undefined ? { b: baseOff } : {}) });
+    }
+
+    raw.sort((a, b) => a.o - b.o);
+    const blocks: { s: string; o: number; c: number; t: ObjType | null; d: 0 | 1; b?: number }[] = raw.map((r, i) => {
+      const end = i + 1 < raw.length ? raw[i + 1]!.o : entry.size - 20;
+      return { ...r, c: Math.max(0, end - r.o) };
+    });
+
+    return { name: packName, sizeBytes: entry.size, count: pf.idx.count, deltas, byType, unpackedTotal, truncated, blocks };
   }
 
   async blobDiff(aSpec: string, bSpec: string): Promise<Record<string, unknown> | null> {

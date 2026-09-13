@@ -19,6 +19,7 @@ gitv 是一个拒绝把 `.git` 当黑盒的 git 仓库可视化器。它直接�
 - **HISTORY** — 提交图：真实的 lane 路由、branch / tag / HEAD 徽章、merge 贝塞尔曲线、相对时间、历史截断处的虚线桩。悬停任意提交会点亮它的血缘边；拖动提交，边跟着走。
 - **CHANGES** — `worktree → index → HEAD` 三列流转，与 `git status` 所见完全一致。编辑文件、`git add`、commit 时，chip 会在列与列之间移动。点击 chip 查看两个状态之间的内容 diff。
 - **OBJECTS ON DISK** — 数据库里的每个对象，按类型分组、按内容定大小。loose 对象是白色实线卡片，已进 pack 的对象带虚线边框和深色底。文本 blob 直接预览前几行，图片渲染缩略图，大文件与二进制被织成字节挂毯（每字节一格，按值上色）。
+- **PACKS ON DISK** — 把 packfile 按它在磁盘上的真实样子画出来：每个对象一个色块，位置是真实字节偏移、宽度是压缩后大小、颜色按类型，delta 与其 base 之间用弧线相连。悬停任意色块，它的整个 delta 家族点亮、其余褪色；点击进入对象详情。标题行读出大小、类型统计、delta 数量和压缩比。
 - **Inspector** — 点击任意对象，自上而下读完整个解析故事：字节在哪里（loose 路径或 pack+offset）→ zlib 流 → 解压后的 `type size\0` 头部（高亮）→ 解析出的字段 → 完整性校验（重新哈希字节，复现对象名）。悬停某个字段，高亮它来源的精确字节；delta 对象会展示完整 delta 链——每一跳的 sha、类型和大小，一路到底层 base。
 
 <p align="center">
@@ -31,6 +32,10 @@ gitv 是一个拒绝把 `.git` 当黑盒的 git 仓库可视化器。它直接�
 
 <p align="center">
   <img src="docs/diff.png" alt="worktree 与 index 的 diff" width="700">
+</p>
+
+<p align="center">
+  <img src="docs/packmap.png" alt="packfile 字节地图：按偏移铺开的块与 delta 弧线" width="880">
 </p>
 
 ## 实时
@@ -65,7 +70,10 @@ bun run demo      # 生成 demo-repo/ —— 什么都值得看一眼的仓库
 bun test          # 解析器用 git 自己的输出验证
 bun x tsc --noEmit
 bun run scripts/record.ts   # 录制 docs/live.gif
+bun run compile   # 单文件可执行 → dist/gitv(.exe)
 ```
+
+`bun run compile` 会把前端打包进一个独立可执行文件（前端资源内嵌，自带 Bun 运行时）——拷到任何机器直接 `gitv serve <仓库>`，无需安装任何东西。
 
 ## 工作原理
 

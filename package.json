@@ -10,7 +10,8 @@
     "start": "bun run src/cli.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "demo": "bun run scripts/demo.ts"
+    "demo": "bun run scripts/demo.ts",
+    "compile": "bun run scripts/embed.ts && bun build --compile src/cli.ts --outfile dist/gitv"
   },
   "engines": {
     "bun": ">=1.1"

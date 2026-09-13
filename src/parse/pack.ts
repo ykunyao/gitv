@@ -139,6 +139,7 @@ export class PackFile {
   readonly idx: PackIndex;
   private mem: Buffer | null = null;
   private refMap: Map<string, number> | null = null;
+  private sortedOffsets: number[] | null = null;
   private file: ReturnType<typeof Bun.file>;
 
   constructor(readonly path: string, idx: PackIndex, readonly size: number, readonly hashLen = 20) {
@@ -166,10 +167,12 @@ export class PackFile {
     return h;
   }
 
-  /** End of the entry whose data starts at dataOff: the next idx offset (or the pack trailer). */
+  /** End of the entry whose data starts at dataOff: the next entry's start
+   * in FILE ORDER (idx offsets are sha-sorted, not offset-sorted!). */
   private entryEnd(dataOff: number): number {
-    const k = nextGreater(this.idx.offsets, dataOff);
-    return k < this.idx.offsets.length ? this.idx.offsets[k]! : this.size - 20;
+    if (!this.sortedOffsets) this.sortedOffsets = [...this.idx.offsets].sort((a, b) => a - b);
+    const k = nextGreater(this.sortedOffsets, dataOff);
+    return k < this.sortedOffsets.length ? this.sortedOffsets[k]! : this.size - 20;
   }
 
   private resolveRef = async (sha: string): Promise<number> => {

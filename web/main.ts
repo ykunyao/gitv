@@ -5,6 +5,7 @@ import { getTree } from "./api.ts";
 import { Scene, PosStore, el, place } from "./scene.ts";
 import { layoutGraph, renderGraph } from "./graph.ts";
 import { renderField } from "./field.ts";
+import { renderPacks, invalidatePacks } from "./packs.ts";
 import { renderFlow, type FlowTarget } from "./flow.ts";
 import { Inspector } from "./inspector.ts";
 import { searchModel, renderHits, type SearchHit } from "./search.ts";
@@ -53,9 +54,11 @@ graphZone.id = "zone-graph";
 graphZone.appendChild(el("div", "zone-label", "HISTORY"));
 const flowZone = el("section", "zone");
 flowZone.appendChild(el("div", "zone-label", "CHANGES"));
+const packsZone = el("section", "zone");
+packsZone.appendChild(el("div", "zone-label", "PACKS ON DISK"));
 const fieldZone = el("section", "zone");
 fieldZone.appendChild(el("div", "zone-label", "OBJECTS ON DISK"));
-world.append(graphZone, flowZone, fieldZone);
+world.append(graphZone, flowZone, packsZone, fieldZone);
 
 let posStore = new PosStore("boot");
 let fitDone = false;
@@ -64,6 +67,7 @@ let lastRender: { model: RepoModel; events: ModelEvent[] } | null = null;
 function render(model: RepoModel, events: ModelEvent[]): void {
   currentModel = model;
   lastRender = { model, events };
+  const gap = 64;
   const graphFlash = new Set<string>();
   for (const e of events) {
     if (e.e === "commit-add") graphFlash.add(e.sha);
@@ -89,14 +93,27 @@ function render(model: RepoModel, events: ModelEvent[]): void {
     if (lastRender) render(lastRender.model, []);
   }, (target) => void inspector.openChip(target));
 
+  // packs (only when at least one packfile exists)
+  let packsH = 0;
+  if (model.packs.length) {
+    const packs = renderPacks(packsZone, model, (sha) => openObject(sha));
+    const packsY = Math.max(graph.height, flow.height) + gap;
+    place(packsZone, 0, packsY);
+    packsZone.style.width = `${packs.width}px`;
+    packsZone.style.height = `${packs.height}px`;
+    packsZone.style.display = "block";
+    packsH = packs.height;
+  } else {
+    packsZone.style.display = "none";
+  }
+
   // field
   const fieldFlash = new Set<string>();
   for (const e of events) if (e.e === "object-add" || e.e === "object-del") fieldFlash.add(e.sha);
   const field = renderField(fieldZone, model, posStore, scene, fieldFlash, inspector.currentSha, (sha) => openObject(sha));
   applyScope();
 
-  // zones: graph top-left, flow to its right, field below both
-  const gap = 64;
+  // zones: graph top-left, flow to its right, packs + field below
   const flowX = graph.width + gap;
   place(flowZone, flowX, 0);
   flowZone.style.width = `${flow.width}px`;
@@ -106,7 +123,8 @@ function render(model: RepoModel, events: ModelEvent[]): void {
   graphZone.style.width = `${graph.width}px`;
   graphZone.style.height = `${graph.height}px`;
 
-  const fieldY = Math.max(graph.height, flow.height) + gap;
+  const packsY = Math.max(graph.height, flow.height) + gap;
+  const fieldY = packsY + (model.packs.length ? packsH + gap : 0);
   const fieldW = Math.max(field.width, graph.width + gap + flow.width);
   place(fieldZone, 0, fieldY);
   fieldZone.style.width = `${fieldW}px`;

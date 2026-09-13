@@ -33,6 +33,11 @@ English | [中文说明](README.zh-CN.md)
   dashed border and a darker fill. Text blobs show their first lines, images
   render as thumbnails, large and binary blobs are woven into a byte tapestry
   (one cell per byte, colored by value class).
+- **PACKS ON DISK** — each packfile drawn as it lies on disk: one block per
+  object at its real byte offset, sized by compressed size, colored by type,
+  with arcs linking every delta to its base. Hover a block and its whole
+  delta family lights up while the rest fades; click to inspect. The caption
+  line reads out size, census, delta count and compression ratio.
 - **Inspector** — click any object and read the parsing story top to bottom:
   where the bytes live → the zlib stream → the inflated `type size\0` header →
   the parsed payload → an integrity check that re-hashes the bytes and
@@ -50,6 +55,10 @@ English | [中文说明](README.zh-CN.md)
 
 <p align="center">
   <img src="docs/diff.png" alt="worktree vs index diff" width="700">
+</p>
+
+<p align="center">
+  <img src="docs/packmap.png" alt="packfile map: blocks at byte offsets, delta arcs" width="880">
 </p>
 
 ## Live
@@ -94,7 +103,12 @@ bun run demo      # builds demo-repo/ — a repo with everything worth looking a
 bun test          # parsers verified against git's own output
 bun x tsc --noEmit
 bun run scripts/record.ts   # records docs/live.gif
+bun run compile   # single-file executable → dist/gitv(.exe)
 ```
+
+`bun run compile` bakes the frontend into one standalone binary (frontend
+assets embedded, git and Bun runtime included) — copy it anywhere and run
+`gitv serve <repo>` with nothing else installed.
 
 ## How it works
 

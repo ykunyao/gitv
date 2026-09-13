@@ -113,6 +113,50 @@ describe("RepoScanner", () => {
     for (const e of chain.entries) expect(e.sha).toBeTruthy();
   });
 
+  test("packDetail byte map", async () => {
+    const s = scanner();
+    const model = await s.scan();
+    expect(model.packs.length).toBeGreaterThan(0);
+    const pack = model.packs[0]!;
+    const d = (await s.packDetail(pack.name.replace(/\.pack$/, "")))!;
+    expect(d.count).toBe(pack.count);
+    expect(d.sizeBytes).toBe(pack.sizeBytes);
+    expect(d.blocks.length).toBe(d.count);
+    // blocks are sorted by offset and tile the file exactly
+    expect(d.blocks[0]!.o).toBe(12); // "PACK" + version + count header
+    expect(d.blocks.at(-1)!.o).toBeLessThan(d.sizeBytes - 20);
+    let sum = 0;
+    for (let i = 0; i < d.blocks.length; i++) {
+      const b = d.blocks[i]!;
+      const end = i + 1 < d.blocks.length ? d.blocks[i + 1]!.o : d.sizeBytes - 20;
+      expect(b.c).toBe(end - b.o);
+      sum += b.c;
+      if (i > 0) expect(b.o).toBeGreaterThan(d.blocks[i - 1]!.o);
+    }
+    expect(sum + 32).toBe(d.sizeBytes); // 12-byte header + 20-byte trailer
+    // typed census matches verify-pack's census
+    const verify = git(fx.dir, ["verify-pack", "-v", join(fx.dir, ".git", "objects", "pack", pack.name)]);
+    const verifyTypes = new Map<string, string>();
+    for (const l of verify.split("\n")) {
+      const parts = l.trim().split(/\s+/);
+      if (parts.length >= 5 && /^[0-9a-f]{40}$/.test(parts[0]!)) verifyTypes.set(parts[0]!, parts[1]!);
+    }
+    for (const b of d.blocks) {
+      const t = verifyTypes.get(b.s)!;
+      if (b.t) expect(b.t as string).toBe(t);
+    }
+    // compressed sizes match verify-pack's size-in-packfile column
+    let checked = 0;
+    for (const l of verify.split("\n")) {
+      const parts = l.trim().split(/\s+/);
+      if (parts.length < 5 || !/^[0-9a-f]{40}$/.test(parts[0]!) || checked >= 20) continue;
+      const b = d.blocks.find((x) => x.s === parts[0]!);
+      expect(b).toBeTruthy();
+      expect(b!.c).toBe(Number(parts[3]));
+      checked++;
+    }
+  });
+
   test("blob diff", async () => {
     const s = scanner();
     await s.scan();

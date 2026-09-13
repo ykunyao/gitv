@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 
 export interface RepoWatcher {
   close(): void;
+  /** Suppress change events for a while (used while gitv itself scans). */
+  muteFor(ms: number): void;
 }
 
 export function watchRepo(worktree: string, gitDir: string, onChange: () => void, debounceMs = 120): RepoWatcher {
@@ -12,9 +14,10 @@ export function watchRepo(worktree: string, gitDir: string, onChange: () => void
   let timer: ReturnType<typeof setTimeout> | null = null;
   let poller: ReturnType<typeof setInterval> | null = null;
   let closed = false;
+  let mutedUntil = 0;
 
   const kick = (): void => {
-    if (closed) return;
+    if (closed || Date.now() < mutedUntil) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
@@ -22,14 +25,17 @@ export function watchRepo(worktree: string, gitDir: string, onChange: () => void
     }, debounceMs);
   };
 
+  // git's own *.lock files flicker on every git invocation; reacting to them
+  // creates a scan → status → index.lock → scan feedback loop.
+  const isNoise = (filename: string | null): boolean => !!filename && String(filename).endsWith(".lock");
+
   const add = (dir: string): void => {
     try {
       const w = watch(dir, { recursive: true }, (event, filename) => {
-        // ignore our own churn and editor temp noise handled by debounce
+        if (isNoise(filename)) return;
         kick();
       });
       w.on("error", () => {
-        // fall back to polling if the watch breaks (e.g. dir replaced)
         if (!poller) poller = setInterval(kick, 1500);
       });
       watchers.push(w);
@@ -48,6 +54,9 @@ export function watchRepo(worktree: string, gitDir: string, onChange: () => void
       if (timer) clearTimeout(timer);
       if (poller) clearInterval(poller);
       for (const w of watchers) w.close();
+    },
+    muteFor(ms) {
+      mutedUntil = Date.now() + ms;
     },
   };
 }

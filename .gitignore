@@ -6,3 +6,5 @@ demo-repo/
 .DS_Store
 .playwright-cli/  
 output/  
+dist/  
+src/embedded-app.ts  
